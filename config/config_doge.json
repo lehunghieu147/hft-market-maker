@@ -1,0 +1,29 @@
+{
+    "api": {
+        "key": "YOUR_BINANCE_API_KEY",
+        "secret": "YOUR_BINANCE_API_SECRET"
+    },
+    "trading": {
+        "symbol": "DOGEUSDT",
+        "order_size": 20.0,
+        "spread_percentage": 0.02,
+        "base_asset": "DOGE",
+        "quote_asset": "USDT",
+        "display_assets": ["USDT", "DOGE", "BTC"],
+        "supported_quote_currencies": ["USDT", "BUSD", "DOGE", "ETH", "BNB"]
+    },
+    "exchange": {
+        "name": "binance",
+        "ws_url": "wss://stream.binance.com:9443/ws",
+        "rest_url": "https://api.binance.com",
+        "ws_trading_url": "wss://ws-api.binance.com:443",
+        "use_websocket_trading": true,
+        "testnet": false
+    },
+    "performance": {
+        "order_update_cooldown_ms": 500,
+        "reconnect_delay_ms": 5000,
+        "max_reconnect_attempts": 10,
+        "max_orders_per_second": 2
+    }
+}
