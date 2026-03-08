@@ -50,6 +50,31 @@ bool MarketMakerBot::initialize() {
     order_manager_ = std::make_shared<OrderManager>(exchange_, config_, risk_manager_);
     logger_->log(LogLevel::INFO, "Order manager initialized successfully");
 
+    // Initialize volatility tracker
+    volatility_tracker_ = std::make_shared<VolatilityTracker>(100, 0.001, 0.05);
+    logger_->log(LogLevel::INFO, "Volatility tracker initialized");
+
+    // Initialize User Data Stream for real fill tracking
+    user_data_stream_ = std::make_unique<UserDataStream>(
+        config_.api_key, config_.api_secret,
+        config_.rest_base_url, config_.ws_base_url);
+
+    // Wire fill callback to OrderManager
+    user_data_stream_->set_fill_callback(
+        [this](const std::string& order_id, const std::string& client_order_id,
+               OrderSide side, OrderStatus status,
+               double price, double qty, double cum_qty) {
+            order_manager_->on_fill_event(order_id, client_order_id,
+                                          side, status, price, qty, cum_qty);
+        });
+
+    if (!user_data_stream_->start()) {
+        logger_->log(LogLevel::WARNING, "User Data Stream failed to start - "
+                     "position tracking will be unavailable");
+    } else {
+        logger_->log(LogLevel::INFO, "User Data Stream connected");
+    }
+
     initialized_ = true;
     logger_->log(LogLevel::INFO, "Market Maker Bot V2 initialized successfully");
 
@@ -133,6 +158,11 @@ void MarketMakerBot::run() {
 void MarketMakerBot::stop() {
     logger_->log(LogLevel::INFO, "Stopping Market Maker Bot V2...");
     running_ = false;
+
+    // Stop User Data Stream first
+    if (user_data_stream_) {
+        user_data_stream_->stop();
+    }
 
     // Notify condition variable to wake up main loop
     price_change_cv_.notify_all();
@@ -218,10 +248,17 @@ void MarketMakerBot::update_mid_price() {
     std::lock_guard<std::mutex> lock(orderbook_mutex_);
 
     if (!current_orderbook_.bids.empty() && !current_orderbook_.asks.empty()) {
-        double best_bid = current_orderbook_.bids[0].price;
-        double best_ask = current_orderbook_.asks[0].price;
-        double new_mid_price = (best_bid + best_ask) / 2.0;
+        // Use VWAP mid price for better accuracy
+        double new_mid_price = current_orderbook_.get_vwap_mid(5);
+        if (new_mid_price <= 0) {
+            new_mid_price = current_orderbook_.get_mid_price();
+        }
         double old_mid_price = current_mid_price_.exchange(new_mid_price);
+
+        // Feed volatility tracker
+        if (volatility_tracker_) {
+            volatility_tracker_->on_price(new_mid_price);
+        }
 
         if (std::abs(old_mid_price - new_mid_price) > 0.00001) {
             std::cout << "[PRICE UPDATE] Mid price: $" << std::fixed << std::setprecision(5)

@@ -280,6 +280,15 @@ bool OrderManager::update_orders_if_needed(double new_mid_price) {
 }
 
 bool OrderManager::update_orders_if_needed(double new_mid_price, const std::chrono::steady_clock::time_point& orderbook_time) {
+    // Timestamp validation: reject stale orderbook data (>5 seconds old)
+    auto age = std::chrono::steady_clock::now() - orderbook_time;
+    if (age > std::chrono::seconds(5)) {
+        std::cerr << "[ORDER] Rejecting stale orderbook data ("
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(age).count()
+                  << "ms old)" << std::endl;
+        return false;
+    }
+
     if (!should_update_orders(new_mid_price)) {
         return true;  // No update needed
     }
@@ -340,8 +349,7 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
 
     if (risk_manager_) {
         risk_manager_->on_success();
-        // Track position (approximate until User Data Stream in Phase 04)
-        risk_manager_->position_tracker().on_fill(side, price, quantity);
+        // Position tracking is done via UserDataStream on_fill_event (real fills)
     }
 
     std::lock_guard<std::mutex> lock(orders_mutex_);
@@ -367,6 +375,15 @@ bool OrderManager::cancel_order(const std::shared_ptr<Order>& order) {
     auto result = exchange_->cancel_order(config_.symbol, order->order_id);
 
     if (!result || !*result) {
+        // Cancel failed — check if order was already filled
+        auto status = exchange_->get_order_status(config_.symbol, order->order_id);
+        if (status && (status->status == OrderStatus::FILLED ||
+                       status->status == OrderStatus::CANCELED)) {
+            std::cout << "[ORDER] Cancel failed but order already "
+                      << (status->status == OrderStatus::FILLED ? "FILLED" : "CANCELED")
+                      << ": " << order->order_id << std::endl;
+            return true;  // Not an error
+        }
         std::cerr << "Failed to cancel order: " << order->order_id << std::endl;
         return false;
     }
@@ -441,6 +458,41 @@ std::string OrderManager::generate_client_order_id(OrderSide side) {
        << "_" << dis(gen);
 
     return ss.str();
+}
+
+void OrderManager::on_fill_event(const std::string& order_id,
+                                 const std::string& /*client_order_id*/,
+                                 OrderSide side,
+                                 OrderStatus status,
+                                 double price,
+                                 double quantity,
+                                 double /*cumulative_quantity*/) {
+    // Always update order state, regardless of risk_manager presence
+    {
+        std::lock_guard<std::mutex> lock(orders_mutex_);
+        if (active_bid_order_ && active_bid_order_->order_id == order_id) {
+            active_bid_order_->status = status;
+            active_bid_order_->executed_quantity += quantity;
+            if (status == OrderStatus::FILLED || status == OrderStatus::CANCELED) {
+                active_bid_order_.reset();
+            }
+        } else if (active_ask_order_ && active_ask_order_->order_id == order_id) {
+            active_ask_order_->status = status;
+            active_ask_order_->executed_quantity += quantity;
+            if (status == OrderStatus::FILLED || status == OrderStatus::CANCELED) {
+                active_ask_order_.reset();
+            }
+        }
+    }
+
+    // Track position from real fills
+    if (risk_manager_ && quantity > 0 &&
+        (status == OrderStatus::FILLED || status == OrderStatus::PARTIALLY_FILLED)) {
+        risk_manager_->position_tracker().on_fill(side, price, quantity);
+
+        std::cout << "[FILL] Real fill: " << (side == OrderSide::BUY ? "BUY" : "SELL")
+                  << " " << quantity << " @ " << price << std::endl;
+    }
 }
 
 } // namespace MarketMaker

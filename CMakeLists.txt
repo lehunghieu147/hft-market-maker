@@ -72,6 +72,7 @@ set(SOURCES
     src/network/websocket_client.cpp
     src/network/websocket_trading_client.cpp
     src/network/websocket_trading_adapter.cpp
+    src/network/user_data_stream.cpp
     # Trading
     src/trading/market_maker.cpp
     src/trading/order_manager.cpp
@@ -80,6 +81,7 @@ set(SOURCES
     src/trading/position_tracker.cpp
     src/trading/pnl_tracker.cpp
     src/trading/risk_manager.cpp
+    src/trading/volatility_tracker.cpp
 )
 
 # Create executable

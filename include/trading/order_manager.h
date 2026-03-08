@@ -29,6 +29,15 @@ public:
     bool update_orders_if_needed(double new_mid_price);
     bool update_orders_if_needed(double new_mid_price, const std::chrono::steady_clock::time_point& orderbook_time);
 
+    // Fill event from User Data Stream (real fill tracking)
+    void on_fill_event(const std::string& order_id,
+                       const std::string& client_order_id,
+                       OrderSide side,
+                       OrderStatus status,
+                       double price,
+                       double quantity,
+                       double cumulative_quantity);
+
     // Get current orders
     std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>> get_active_orders() const;
 

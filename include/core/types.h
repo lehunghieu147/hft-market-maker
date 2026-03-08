@@ -48,6 +48,47 @@ struct OrderBook {
     double get_best_ask() const {
         return asks.empty() ? 0.0 : asks[0].price;
     }
+
+    // Volume-weighted mid price using top N levels
+    double get_vwap_mid(size_t depth = 5) const {
+        if (bids.empty() || asks.empty()) return 0.0;
+
+        double bid_value = 0.0, bid_volume = 0.0;
+        double ask_value = 0.0, ask_volume = 0.0;
+
+        size_t bid_depth = std::min(depth, bids.size());
+        size_t ask_depth = std::min(depth, asks.size());
+
+        for (size_t i = 0; i < bid_depth; ++i) {
+            bid_value += bids[i].price * bids[i].quantity;
+            bid_volume += bids[i].quantity;
+        }
+        for (size_t i = 0; i < ask_depth; ++i) {
+            ask_value += asks[i].price * asks[i].quantity;
+            ask_volume += asks[i].quantity;
+        }
+
+        if (bid_volume <= 0 || ask_volume <= 0) return get_mid_price();
+
+        double vwap_bid = bid_value / bid_volume;
+        double vwap_ask = ask_value / ask_volume;
+        return (vwap_bid + vwap_ask) / 2.0;
+    }
+
+    // Orderbook imbalance ratio: >1 means more bid pressure, <1 more ask pressure
+    double get_imbalance_ratio(size_t depth = 5) const {
+        if (bids.empty() || asks.empty()) return 1.0;
+
+        double bid_volume = 0.0, ask_volume = 0.0;
+        size_t bid_depth = std::min(depth, bids.size());
+        size_t ask_depth = std::min(depth, asks.size());
+
+        for (size_t i = 0; i < bid_depth; ++i) bid_volume += bids[i].quantity;
+        for (size_t i = 0; i < ask_depth; ++i) ask_volume += asks[i].quantity;
+
+        if (ask_volume <= 0) return 1.0;
+        return bid_volume / ask_volume;
+    }
 };
 
 struct Order {
