@@ -2,9 +2,9 @@
 #define ORDER_VALIDATOR_H
 
 #include "core/types.h"
+#include "core/app_logger.h"
 #include <string>
 #include <optional>
-#include <iostream>
 
 namespace MarketMaker {
 
@@ -111,13 +111,14 @@ public:
     bool pre_validate_order(double price, double quantity, OrderSide side) {
         auto result = validator_.validate_order(price, quantity, side);
         if (!result.is_valid) {
-            std::cerr << "[VALIDATION] Order rejected: " << result.error_message << std::endl;
+            auto* logger = AppLogger::get("trading");
+            LOG_WARNING(logger, "[VALIDATION] Order rejected: {}", result.error_message);
 
             if (result.suggested_price) {
-                std::cerr << "[VALIDATION] Suggested price: " << *result.suggested_price << std::endl;
+                LOG_WARNING(logger, "[VALIDATION] Suggested price: {}", *result.suggested_price);
             }
             if (result.suggested_quantity) {
-                std::cerr << "[VALIDATION] Suggested quantity: " << *result.suggested_quantity << std::endl;
+                LOG_WARNING(logger, "[VALIDATION] Suggested quantity: {}", *result.suggested_quantity);
             }
         }
         return result.is_valid;

@@ -1,11 +1,18 @@
 #include "exchange/binance_exchange.h"
+#include "core/app_logger.h"
 #include <json/json.h>
-#include <iostream>
 #include <sstream>
 #include <iomanip>
 #include <thread>
 #include <cmath>
 #include <algorithm>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("network");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -49,8 +56,7 @@ bool BinanceExchange::initialize(const ExchangeConfig& config) {
         ws_connected_ = connected;
 
         if (connected && !subscribed_symbol_.empty()) {
-            std::cout << "Reconnected - orderbook stream for " << subscribed_symbol_
-                      << " should be active now" << std::endl;
+            LOG_INFO(get_logger(), "Reconnected - orderbook stream for {} should be active now", subscribed_symbol_);
         }
 
         if (connection_handler_) {
@@ -63,24 +69,24 @@ bool BinanceExchange::initialize(const ExchangeConfig& config) {
     // Fetch exchange info to populate symbol cache
     auto exchange_info = get_exchange_info();
     if (!exchange_info) {
-        std::cerr << "Failed to fetch Binance exchange info" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to fetch Binance exchange info");
         return false;
     }
 
     initialized_ = true;
-    std::cout << "BinanceExchange initialized successfully" << std::endl;
+    LOG_INFO(get_logger(), "{}", "BinanceExchange initialized successfully");
 
     // Check account balance on startup
-    std::cout << "Checking account balance..." << std::endl;
+    LOG_INFO(get_logger(), "{}", "Checking account balance...");
     std::string account_info = rest_client_->get_account_info();
-    std::cout << "Account check completed" << std::endl;
+    LOG_INFO(get_logger(), "{}", "Account check completed");
 
     return true;
 }
 
 bool BinanceExchange::connect() {
     if (!initialized_) {
-        std::cerr << "BinanceExchange not initialized" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "BinanceExchange not initialized");
         return false;
     }
 
@@ -129,11 +135,11 @@ bool BinanceExchange::subscribe_orderbook(const std::string& symbol, int depth) 
     // Add stream path
     stream_url += "/ws/" + binance_symbol + "@depth" + std::to_string(depth) + "@100ms";
 
-    std::cout << "Connecting to Binance stream: " << stream_url << std::endl;
+    LOG_INFO(get_logger(), "Connecting to Binance stream: {}", stream_url);
 
     // Connect with full stream URL
     if (!ws_client_->connect(stream_url)) {
-        std::cerr << "Failed to connect to Binance WebSocket stream" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to connect to Binance WebSocket stream");
         return false;
     }
 
@@ -228,7 +234,7 @@ std::optional<std::string> BinanceExchange::get_exchange_info() {
                 }
             }
         } catch (const std::exception& e) {
-            std::cerr << "Error parsing Binance exchange info: " << e.what() << std::endl;
+            LOG_ERROR(get_logger(), "Error parsing Binance exchange info: {}", e.what());
         }
     }
 
@@ -373,7 +379,7 @@ std::optional<double> BinanceExchange::get_balance(const std::string& asset) {
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error parsing balance: " << e.what() << std::endl;
+        LOG_ERROR(get_logger(), "Error parsing balance: {}", e.what());
     }
 
     return std::nullopt;
@@ -529,7 +535,7 @@ void BinanceExchange::process_binance_orderbook(const std::string& json_str) {
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error processing Binance orderbook: " << e.what() << std::endl;
+        LOG_ERROR(get_logger(), "Error processing Binance orderbook: {}", e.what());
     }
 }
 
@@ -605,7 +611,7 @@ Order BinanceExchange::parse_order_response(const std::string& json_str) {
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error parsing order response: " << e.what() << std::endl;
+        LOG_ERROR(get_logger(), "Error parsing order response: {}", e.what());
     }
 
     return order;

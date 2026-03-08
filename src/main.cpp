@@ -1,5 +1,6 @@
 #include "trading/market_maker.h"
 #include "core/config_loader.h"
+#include "core/app_logger.h"
 #include <iostream>
 #include <signal.h>
 #include <atomic>
@@ -86,6 +87,10 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // Initialize logger early
+    AppLogger::init();
+    auto* logger = AppLogger::get("core");
+
     std::cout << "===========================================\n"
               << "    Market Maker Bot - High Frequency Trading\n"
               << "===========================================\n" << std::endl;
@@ -98,50 +103,50 @@ int main(int argc, char* argv[]) {
 
     // Check if config file exists
     if (!std::filesystem::exists(config_file)) {
-        std::cerr << "Error: Config file not found: " << config_file << std::endl;
+        LOG_ERROR(logger, "Config file not found: {}", config_file);
 
         // Create a default config file if it doesn't exist
         if (config_file == "config.json") {
-            std::cout << "\nCreating default config file: config.json" << std::endl;
+            LOG_INFO(logger, "{}", "Creating default config file: config.json");
             Config default_config;
             ConfigLoader::save_to_file(default_config, "config.json");
-            std::cout << "\nPlease edit config.json and add your API credentials, then run again." << std::endl;
+            LOG_INFO(logger, "{}", "Please edit config.json and add your API credentials, then run again.");
         } else {
-            std::cout << "\nPlease create the config file or specify a valid path." << std::endl;
+            LOG_INFO(logger, "{}", "Please create the config file or specify a valid path.");
         }
         print_usage();
+        AppLogger::shutdown();
         return 1;
     }
 
     try {
         // Load configuration from file
-        std::cout << "Loading configuration from: " << config_file << std::endl;
+        LOG_INFO(logger, "Loading configuration from: {}", config_file);
         auto config_opt = ConfigLoader::load_from_file(config_file);
 
         if (!config_opt) {
-            std::cerr << "Failed to load configuration!" << std::endl;
+            LOG_ERROR(logger, "{}", "Failed to load configuration!");
+            AppLogger::shutdown();
             return 1;
         }
 
         Config config = *config_opt;
 
-        std::cout << "Configuration:\n"
-                  << "  Symbol: " << config.symbol << "\n"
-                  << "  Order Size: " << config.order_size << "\n"
-                  << "  Spread: " << (config.spread_percentage * 100) << "%\n";
+        LOG_INFO(logger, "Configuration: symbol={} order_size={} spread={:.2f}%",
+                 config.symbol, config.order_size, config.spread_percentage * 100);
 
         // Create and initialize bot
         bot = std::make_unique<MarketMakerBot>(config);
 
-        std::cout << "Initializing bot..." << std::endl;
+        LOG_INFO(logger, "{}", "Initializing bot...");
         if (!bot->initialize()) {
-            std::cerr << "Failed to initialize bot!" << std::endl;
+            LOG_ERROR(logger, "{}", "Failed to initialize bot!");
+            AppLogger::shutdown();
             return 1;
         }
 
         // Run bot
-        std::cout << "Starting market maker bot...\n"
-                  << "Press Ctrl+C to stop\n" << std::endl;
+        LOG_INFO(logger, "{}", "Starting market maker bot... Press Ctrl+C to stop");
 
         bot->run();
 
@@ -152,7 +157,7 @@ int main(int argc, char* argv[]) {
 
         // Ensure bot is stopped
         if (should_exit && bot) {
-            std::cout << "\nShutting down bot gracefully..." << std::endl;
+            LOG_INFO(logger, "{}", "Shutting down bot gracefully...");
             bot->stop();
             // Give time for cleanup
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -160,23 +165,22 @@ int main(int argc, char* argv[]) {
 
         // Print final metrics
         auto metrics = bot->get_metrics();
-        std::cout << "\n===========================================\n"
-                  << "Final Statistics:\n"
-                  << "  Total Orders: " << metrics.total_orders << "\n"
-                  << "  Successful Orders: " << metrics.successful_orders << "\n"
-                  << "  Failed Orders: " << metrics.failed_orders << "\n"
-                  << "  Average Latency: " << metrics.avg_order_latency_ms << " ms\n"
-                  << "  Min Latency: " << metrics.min_order_latency_ms << " ms\n"
-                  << "  Max Latency: " << metrics.max_order_latency_ms << " ms\n"
-                  << "  Reconnects: " << metrics.reconnect_count << "\n"
-                  << "  Uptime: " << metrics.get_uptime_percentage() << "%\n"
-                  << "===========================================\n" << std::endl;
+        LOG_INFO(logger,
+                 "[FINAL] orders(total={} ok={} fail={}) "
+                 "latency(avg={:.3f} min={:.3f} max={:.3f}ms) "
+                 "reconnects={} uptime={:.2f}%",
+                 metrics.total_orders, metrics.successful_orders, metrics.failed_orders,
+                 metrics.avg_order_latency_ms, metrics.min_order_latency_ms,
+                 metrics.max_order_latency_ms, metrics.reconnect_count,
+                 metrics.get_uptime_percentage());
 
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        LOG_CRITICAL(logger, "Fatal error: {}", e.what());
+        AppLogger::shutdown();
         return 1;
     }
 
-    std::cout << "Bot stopped successfully." << std::endl;
+    LOG_INFO(logger, "{}", "Bot stopped successfully.");
+    AppLogger::shutdown();
     return 0;
 }

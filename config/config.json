@@ -1,11 +1,11 @@
 {
     "api": {
-        "key": "YOUR_API_KEY",
-        "secret": "YOUR_API_SECRET"
+        "key": "***REMOVED***",
+        "secret": "***REMOVED***"
     },
     "trading": {
         "symbol": "SOLUSDT",
-        "order_size": 0.07,
+        "order_size": 0.15,
         "spread_percentage": 0.010,
         "base_asset": "SOL",
         "quote_asset": "USDT",
@@ -30,7 +30,7 @@
     },
     "risk": {
         "max_daily_loss": -100.0,
-        "max_position_size": 0.5,
+        "max_position_size": 1.0,
         "max_drawdown": -500.0,
         "max_consecutive_errors": 5,
         "maker_fee_rate": -0.0001,

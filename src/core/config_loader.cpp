@@ -1,15 +1,22 @@
 #include "core/config_loader.h"
+#include "core/app_logger.h"
 #include <json/json.h>
 #include <fstream>
-#include <iostream>
 #include <cstdlib>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("core");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
 std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Error: Cannot open config file: " << filename << std::endl;
+        LOG_ERROR(get_logger(), "Cannot open config file: {}", filename);
         return std::nullopt;
     }
 
@@ -17,8 +24,8 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
     Json::Reader reader;
 
     if (!reader.parse(file, root)) {
-        std::cerr << "Error: Failed to parse config file: " << filename << std::endl;
-        std::cerr << "Parser error: " << reader.getFormattedErrorMessages() << std::endl;
+        LOG_ERROR(get_logger(), "Failed to parse config file: {}", filename);
+        LOG_ERROR(get_logger(), "Parser error: {}", reader.getFormattedErrorMessages());
         return std::nullopt;
     }
 
@@ -128,7 +135,7 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
         return config;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error loading config: " << e.what() << std::endl;
+        LOG_ERROR(get_logger(), "Error loading config: {}", e.what());
         return std::nullopt;
     }
 }
@@ -168,7 +175,7 @@ bool ConfigLoader::save_to_file(const Config& config, const std::string& filenam
     // Write to file
     std::ofstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Error: Cannot write to config file: " << filename << std::endl;
+        LOG_ERROR(get_logger(), "Cannot write to config file: {}", filename);
         return false;
     }
 
@@ -176,7 +183,7 @@ bool ConfigLoader::save_to_file(const Config& config, const std::string& filenam
     file << writer.write(root);
     file.close();
 
-    std::cout << "Configuration saved to: " << filename << std::endl;
+    LOG_INFO(get_logger(), "Configuration saved to: {}", filename);
     return true;
 }
 
@@ -186,38 +193,38 @@ bool ConfigLoader::validate(const Config& config) {
     // Check API credentials
     if (config.api_key.empty() || config.api_key == "YOUR_BINANCE_API_KEY_HERE" ||
         config.api_key == "YOUR_TESTNET_API_KEY_HERE") {
-        std::cerr << "Error: API key is not configured" << std::endl;
-        std::cerr << "Please edit the config file and add your Binance API key" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "API key is not configured");
+        LOG_ERROR(get_logger(), "{}", "Please edit the config file and add your Binance API key");
         valid = false;
     }
 
     if (config.api_secret.empty() || config.api_secret == "YOUR_BINANCE_API_SECRET_HERE" ||
         config.api_secret == "YOUR_TESTNET_API_SECRET_HERE") {
-        std::cerr << "Error: API secret is not configured" << std::endl;
-        std::cerr << "Please edit the config file and add your Binance API secret" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "API secret is not configured");
+        LOG_ERROR(get_logger(), "{}", "Please edit the config file and add your Binance API secret");
         valid = false;
     }
 
     // Check trading parameters
     if (config.symbol.empty()) {
-        std::cerr << "Error: Trading symbol is not configured" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Trading symbol is not configured");
         valid = false;
     }
 
     if (config.order_size <= 0) {
-        std::cerr << "Error: Invalid order size: " << config.order_size << std::endl;
+        LOG_ERROR(get_logger(), "Invalid order size: {}", config.order_size);
         valid = false;
     }
 
     if (config.spread_percentage <= 0 || config.spread_percentage > 0.1) {
-        std::cerr << "Error: Invalid spread percentage: " << config.spread_percentage << std::endl;
-        std::cerr << "Spread should be between 0 and 0.1 (10%)" << std::endl;
+        LOG_ERROR(get_logger(), "Invalid spread percentage: {}", config.spread_percentage);
+        LOG_ERROR(get_logger(), "{}", "Spread should be between 0 and 0.1 (10%)");
         valid = false;
     }
 
     // Check URLs
     if (config.ws_base_url.empty() || config.rest_base_url.empty()) {
-        std::cerr << "Error: Exchange URLs are not configured" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Exchange URLs are not configured");
         valid = false;
     }
 
@@ -229,37 +236,37 @@ void ConfigLoader::merge_with_env(Config& config) {
     const char* env_api_key = std::getenv("BINANCE_API_KEY");
     if (env_api_key) {
         config.api_key = env_api_key;
-        std::cout << "Using API key from environment variable" << std::endl;
+        LOG_INFO(get_logger(), "{}", "Using API key from environment variable");
     }
 
     const char* env_api_secret = std::getenv("BINANCE_API_SECRET");
     if (env_api_secret) {
         config.api_secret = env_api_secret;
-        std::cout << "Using API secret from environment variable" << std::endl;
+        LOG_INFO(get_logger(), "{}", "Using API secret from environment variable");
     }
 
     const char* env_symbol = std::getenv("SYMBOL");
     if (env_symbol) {
         config.symbol = env_symbol;
-        std::cout << "Using symbol from environment: " << env_symbol << std::endl;
+        LOG_INFO(get_logger(), "Using symbol from environment: {}", env_symbol);
     }
 
     const char* env_order_size = std::getenv("ORDER_SIZE");
     if (env_order_size) {
         config.order_size = std::stod(env_order_size);
-        std::cout << "Using order size from environment: " << config.order_size << std::endl;
+        LOG_INFO(get_logger(), "Using order size from environment: {}", config.order_size);
     }
 
     const char* env_spread = std::getenv("SPREAD_PERCENTAGE");
     if (env_spread) {
         config.spread_percentage = std::stod(env_spread);
-        std::cout << "Using spread from environment: " << config.spread_percentage << std::endl;
+        LOG_INFO(get_logger(), "Using spread from environment: {}", config.spread_percentage);
     }
 
     const char* env_log_file = std::getenv("LOG_FILE");
     if (env_log_file) {
         config.log_file = env_log_file;
-        std::cout << "Using log file from environment: " << env_log_file << std::endl;
+        LOG_INFO(get_logger(), "Using log file from environment: {}", env_log_file);
     }
 }
 

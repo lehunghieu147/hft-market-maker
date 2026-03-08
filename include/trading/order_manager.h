@@ -3,6 +3,7 @@
 
 #include "core/types.h"
 #include "core/config.h"
+#include "quill/Logger.h"
 #include "exchange/exchange_interface.h"
 #include "trading/risk_manager.h"
 #include "trading/order_validator.h"
@@ -73,6 +74,8 @@ private:
                        const std::chrono::steady_clock::time_point& orderbook_time,
                        bool bid_success, bool ask_success);
     std::string generate_client_order_id(OrderSide side);
+
+    quill::Logger* logger_ = nullptr;
 };
 
 } // namespace MarketMaker

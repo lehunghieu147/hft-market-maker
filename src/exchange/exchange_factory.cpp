@@ -2,11 +2,18 @@
 #include "exchange/binance_exchange.h"
 #include "network/websocket_trading_adapter.h"
 
+#include "core/app_logger.h"
 #include <algorithm>
 #include <cctype>
-#include <iostream>
 
 namespace MarketMaker {
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = AppLogger::get("core");
+        return logger;
+    }
+}
 
 // Static registration of built-in exchanges
 namespace {
@@ -45,13 +52,13 @@ std::shared_ptr<IExchange> ExchangeFactory::create(const ExchangeConfig& config)
             if (exchange->initialize(config)) {
                 return exchange;
             } else {
-                std::cerr << "Failed to initialize " << normalized_name << " exchange" << std::endl;
+                LOG_ERROR(get_logger(), "Failed to initialize {} exchange", normalized_name);
                 return nullptr;
             }
         }
     }
 
-    std::cerr << "Exchange type '" << config.exchange_type << "' not supported" << std::endl;
+    LOG_ERROR(get_logger(), "Exchange type '{}' not supported", config.exchange_type);
     return nullptr;
 }
 

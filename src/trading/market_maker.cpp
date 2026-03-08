@@ -1,14 +1,14 @@
 #include "trading/market_maker.h"
 #include "exchange/exchange_factory.h"
 #include "exchange/exchange_interface.h"
-#include <iostream>
-#include <iomanip>
+#include "core/app_logger.h"
 #include <chrono>
 
 namespace MarketMaker {
 
 MarketMakerBot::MarketMakerBot(const Config& config) : config_(config) {
     logger_ = std::make_shared<Logger>(config.log_file);
+    quill_logger_ = AppLogger::get("trading");
 }
 
 MarketMakerBot::~MarketMakerBot() {
@@ -261,18 +261,16 @@ void MarketMakerBot::update_mid_price() {
         }
 
         if (std::abs(old_mid_price - new_mid_price) > 0.00001) {
-            std::cout << "[PRICE UPDATE] Mid price: $" << std::fixed << std::setprecision(5)
-                      << old_mid_price << " -> $" << std::setprecision(5) << new_mid_price
-                      << " (Change: " << std::showpos << std::setprecision(5) << (new_mid_price - old_mid_price)
-                      << std::noshowpos << ")" << std::endl;
+            LOG_INFO(quill_logger_, "[PRICE] ${:.5f} -> ${:.5f} (change: {:+.5f})",
+                     old_mid_price, new_mid_price, new_mid_price - old_mid_price);
 
             // Signal price change for immediate reaction
             price_changed_.store(true);
             price_change_cv_.notify_one();
 
             if (config_.enable_verbose_logging) {
-                logger_->log(LogLevel::INFO, "Mid price updated: " + std::to_string(new_mid_price) +
-                            " (Exchange: " + config_.exchange_type + ")");
+                LOG_DEBUG(quill_logger_, "Mid price updated: {:.5f} (Exchange: {})",
+                          new_mid_price, config_.exchange_type);
             }
         }
     }
@@ -323,53 +321,33 @@ bool MarketMakerBot::validate_config() {
 
 void MarketMakerBot::print_status() {
     auto metrics = order_manager_->get_metrics();
-
-    std::cout << "\n========== Market Maker Status ==========" << std::endl;
-    std::cout << "Exchange: " << exchange_->get_exchange_name() << std::endl;
-    std::cout << "Symbol: " << config_.symbol << std::endl;
-    std::cout << "Current Mid Price: " << std::fixed << std::setprecision(2)
-              << current_mid_price_.load() << std::endl;
-
     auto [bid_order, ask_order] = order_manager_->get_active_orders();
-    if (bid_order) {
-        std::cout << "Active Bid: " << bid_order->price
-                  << " (ID: " << bid_order->order_id << ")" << std::endl;
-    }
-    if (ask_order) {
-        std::cout << "Active Ask: " << ask_order->price
-                  << " (ID: " << ask_order->order_id << ")" << std::endl;
-    }
 
-    std::cout << "\nMetrics:" << std::endl;
-    std::cout << "  Total Orders: " << metrics.total_orders << std::endl;
-    std::cout << "  Successful: " << metrics.successful_orders << std::endl;
-    std::cout << "  Failed: " << metrics.failed_orders << std::endl;
-    std::cout << "\n  Execution Latency (function time):" << std::endl;
-    std::cout << "    Avg: " << std::fixed << std::setprecision(3)
-              << metrics.avg_order_latency_ms << " ms" << std::endl;
-    std::cout << "    Min: " << metrics.min_order_latency_ms << " ms" << std::endl;
-    std::cout << "    Max: " << metrics.max_order_latency_ms << " ms" << std::endl;
-    std::cout << "\n  Reaction Latency (price change → order):" << std::endl;
-    std::cout << "    Avg: " << std::fixed << std::setprecision(3)
-              << metrics.avg_reaction_latency_ms << " ms" << std::endl;
-    std::cout << "    Min: " << metrics.min_reaction_latency_ms << " ms" << std::endl;
-    std::cout << "    Max: " << metrics.max_reaction_latency_ms << " ms" << std::endl;
-    std::cout << "\n  Reconnects: " << metrics.reconnect_count << std::endl;
-    std::cout << "  Uptime: " << std::fixed << std::setprecision(2)
-              << metrics.get_uptime_percentage() << "%" << std::endl;
+    LOG_INFO(quill_logger_,
+             "[STATUS] exchange={} symbol={} mid={:.2f} "
+             "bid={:.2f} ask={:.2f} "
+             "orders(total={} ok={} fail={}) "
+             "exec_lat(avg={:.3f} min={:.3f} max={:.3f}ms) "
+             "react_lat(avg={:.3f} min={:.3f} max={:.3f}ms) "
+             "reconnects={} uptime={:.2f}%",
+             exchange_->get_exchange_name(), config_.symbol, current_mid_price_.load(),
+             bid_order ? bid_order->price : 0.0,
+             ask_order ? ask_order->price : 0.0,
+             metrics.total_orders, metrics.successful_orders, metrics.failed_orders,
+             metrics.avg_order_latency_ms, metrics.min_order_latency_ms, metrics.max_order_latency_ms,
+             metrics.avg_reaction_latency_ms, metrics.min_reaction_latency_ms, metrics.max_reaction_latency_ms,
+             metrics.reconnect_count, metrics.get_uptime_percentage());
 
     if (risk_manager_) {
-        std::cout << "\nRisk:" << std::endl;
-        std::cout << "  Position: " << std::fixed << std::setprecision(6)
-                  << risk_manager_->position_tracker().get_position() << std::endl;
-        std::cout << "  Daily P&L: " << std::fixed << std::setprecision(4)
-                  << risk_manager_->pnl_tracker().get_daily_pnl() << std::endl;
-        std::cout << "  Total P&L: " << risk_manager_->pnl_tracker().get_realized_pnl() << std::endl;
-        std::cout << "  Fees Paid: " << risk_manager_->pnl_tracker().get_total_fees() << std::endl;
-        std::cout << "  Kill Switch: " << (risk_manager_->is_kill_switch_active() ? "ACTIVE" : "off") << std::endl;
+        LOG_INFO(quill_logger_,
+                 "[RISK] position={:.6f} daily_pnl={:.4f} total_pnl={:.4f} "
+                 "fees={:.4f} kill_switch={}",
+                 risk_manager_->position_tracker().get_position(),
+                 risk_manager_->pnl_tracker().get_daily_pnl(),
+                 risk_manager_->pnl_tracker().get_realized_pnl(),
+                 risk_manager_->pnl_tracker().get_total_fees(),
+                 risk_manager_->is_kill_switch_active() ? "ACTIVE" : "off");
     }
-
-    std::cout << "=========================================" << std::endl;
 }
 
 std::string MarketMakerBot::format_symbol_for_exchange() {

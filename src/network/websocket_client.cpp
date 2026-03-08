@@ -1,5 +1,5 @@
 #include "network/websocket_client.h"
-#include <iostream>
+#include "core/app_logger.h"
 #include <sstream>
 #include <cstring>
 #include <cerrno>
@@ -11,6 +11,13 @@
 #include <unistd.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("network");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -32,7 +39,7 @@ public:
         // Create SSL context
         ssl_ctx = SSL_CTX_new(TLS_client_method());
         if (!ssl_ctx) {
-            std::cerr << "Failed to create SSL context" << std::endl;
+            LOG_ERROR(get_logger(), "{}", "Failed to create SSL context");
         }
 
         SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
@@ -83,7 +90,7 @@ WebSocketClient::~WebSocketClient() {
 
 bool WebSocketClient::connect(const std::string& uri) {
     current_uri_ = uri;
-    std::cout << "WebSocketClient::connect() called with URI: " << uri << std::endl;
+    LOG_DEBUG(get_logger(), "WebSocketClient::connect() called with URI: {}", uri);
 
     // Parse URI (simplified - assumes wss://host:port/path format)
     std::string host;
@@ -112,7 +119,7 @@ bool WebSocketClient::connect(const std::string& uri) {
     // Create socket
     pImpl->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (pImpl->socket_fd < 0) {
-        std::cerr << "Failed to create socket" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to create socket");
         return false;
     }
 
@@ -122,11 +129,11 @@ bool WebSocketClient::connect(const std::string& uri) {
     timeout.tv_usec = 0;
 
     if (setsockopt(pImpl->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
-        std::cerr << "Failed to set receive timeout" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to set receive timeout");
     }
 
     if (setsockopt(pImpl->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
-        std::cerr << "Failed to set send timeout" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to set send timeout");
     }
 
     // Resolve hostname (thread-safe)
@@ -136,8 +143,7 @@ bool WebSocketClient::connect(const std::string& uri) {
 
     int gai_err = getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &result);
     if (gai_err != 0 || !result) {
-        std::cerr << "Failed to resolve hostname: " << host
-                  << " (" << gai_strerror(gai_err) << ")" << std::endl;
+        LOG_ERROR(get_logger(), "Failed to resolve hostname: {} ({})", host, gai_strerror(gai_err));
         return false;
     }
 
@@ -146,7 +152,7 @@ bool WebSocketClient::connect(const std::string& uri) {
     freeaddrinfo(result);
 
     if (connect_result < 0) {
-        std::cerr << "Failed to connect to server" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to connect to server");
         close(pImpl->socket_fd);
         pImpl->socket_fd = -1;
         return false;
@@ -155,7 +161,7 @@ bool WebSocketClient::connect(const std::string& uri) {
     // Setup SSL
     pImpl->ssl = SSL_new(pImpl->ssl_ctx);
     if (!pImpl->ssl) {
-        std::cerr << "Failed to create SSL connection" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to create SSL connection");
         return false;
     }
 
@@ -165,8 +171,7 @@ bool WebSocketClient::connect(const std::string& uri) {
     SSL_set_fd(pImpl->ssl, pImpl->socket_fd);
 
     if (SSL_connect(pImpl->ssl) <= 0) {
-        std::cerr << "SSL connection failed" << std::endl;
-        ERR_print_errors_fp(stderr);
+        LOG_ERROR(get_logger(), "{}", "SSL connection failed");
         return false;
     }
 
@@ -224,19 +229,19 @@ bool WebSocketClient::connect(const std::string& uri) {
             // Start/restart worker thread
             if (worker_thread_.joinable()) {
                 // Join old thread if it's still running
-                std::cout << "[WS] Joining old worker thread..." << std::endl;
+                LOG_DEBUG(get_logger(), "{}", "[WS] Joining old worker thread...");
                 worker_thread_.join();
             }
             worker_thread_ = std::thread(&WebSocketClient::run_worker, this);
-            std::cout << "[WS] Worker thread started" << std::endl;
+            LOG_DEBUG(get_logger(), "{}", "[WS] Worker thread started");
 
             // Start/restart heartbeat thread
             if (heartbeat_thread_.joinable()) {
-                std::cout << "[WS] Joining old heartbeat thread..." << std::endl;
+                LOG_DEBUG(get_logger(), "{}", "[WS] Joining old heartbeat thread...");
                 heartbeat_thread_.join();
             }
             heartbeat_thread_ = std::thread(&WebSocketClient::run_heartbeat, this);
-            std::cout << "[WS] Heartbeat thread started" << std::endl;
+            LOG_DEBUG(get_logger(), "{}", "[WS] Heartbeat thread started");
 
             if (connection_handler_) {
                 connection_handler_(true);
@@ -246,19 +251,19 @@ bool WebSocketClient::connect(const std::string& uri) {
         }
     }
 
-    std::cerr << "WebSocket upgrade failed" << std::endl;
+    LOG_ERROR(get_logger(), "{}", "WebSocket upgrade failed");
     pImpl->disconnect();
     return false;
 }
 
 void WebSocketClient::disconnect() {
-    std::cout << "[WS] Disconnecting..." << std::endl;
+    LOG_INFO(get_logger(), "{}", "[WS] Disconnecting...");
     connected_ = false;
     if (connection_handler_) {
         connection_handler_(false);
     }
     pImpl->disconnect();
-    std::cout << "[WS] Disconnected" << std::endl;
+    LOG_INFO(get_logger(), "{}", "[WS] Disconnected");
 }
 
 bool WebSocketClient::is_connected() const {
@@ -433,7 +438,7 @@ void WebSocketClient::run_worker() {
                         if (message_handler_ && !accumulated_data.empty()) {
                             // Debug: Log first 100 chars of message
                             std::string preview = accumulated_data.substr(0, std::min(size_t(100), accumulated_data.length()));
-                            std::cout << "[WS] Message received: " << preview << "..." << std::endl;
+                            LOG_DEBUG(get_logger(), "[WS] Message received: {}...", preview);
 
                             message_handler_(accumulated_data);
 
@@ -472,7 +477,7 @@ void WebSocketClient::run_worker() {
             }
         } else if (bytes == 0) {
             // Connection closed
-            std::cerr << "WebSocket connection closed by server" << std::endl;
+            LOG_ERROR(get_logger(), "{}", "WebSocket connection closed by server");
             disconnect();
             break;
         } else {
@@ -486,14 +491,7 @@ void WebSocketClient::run_worker() {
             }
 
             // Real error occurred
-            std::cerr << "SSL read error: " << ssl_error;
-
-            // Check errno for socket-level errors
-            if (errno == ETIMEDOUT || errno == ECONNRESET || errno == EPIPE ||
-                errno == ENETUNREACH || errno == EHOSTUNREACH) {
-                std::cerr << " (Socket error: " << strerror(errno) << ")";
-            }
-            std::cerr << std::endl;
+            LOG_ERROR(get_logger(), "SSL read error: {} (Socket: {})", ssl_error, strerror(errno));
 
             disconnect();
             break;
@@ -520,21 +518,20 @@ void WebSocketClient::handle_reconnect() {
 
         while (should_run_ && auto_reconnect_ && !connected_ && attempts < max_attempts) {
             attempts++;
-            std::cout << "Reconnection attempt " << attempts << "/" << max_attempts
-                      << " using URI: " << current_uri_ << std::endl;
+            LOG_INFO(get_logger(), "Reconnection attempt {}/{} using URI: {}", attempts, max_attempts, current_uri_);
 
             std::this_thread::sleep_for(reconnect_delay_);
 
             if (!should_run_) break;
 
             if (connect(current_uri_)) {
-                std::cout << "Reconnected successfully!" << std::endl;
+                LOG_INFO(get_logger(), "{}", "Reconnected successfully!");
                 break;
             }
         }
 
         if (!connected_ && attempts >= max_attempts) {
-            std::cerr << "Failed to reconnect after " << max_attempts << " attempts" << std::endl;
+            LOG_ERROR(get_logger(), "Failed to reconnect after {} attempts", max_attempts);
         }
     });
     // Thread is joinable, will be joined in destructor - no detach()
@@ -559,7 +556,7 @@ void WebSocketClient::run_heartbeat() {
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_msg_time).count();
 
         if (elapsed > 30) {
-            std::cerr << "No message received for " << elapsed << " seconds - connection appears dead" << std::endl;
+            LOG_WARNING(get_logger(), "No message received for {}s - connection appears dead", elapsed);
             disconnect();
             break;
         }
@@ -588,7 +585,7 @@ void WebSocketClient::send_ping() {
 
     int sent = SSL_write(pImpl->ssl, ping_frame, 6);
     if (sent <= 0) {
-        std::cerr << "Failed to send ping frame" << std::endl;
+        LOG_WARNING(get_logger(), "{}", "Failed to send ping frame");
     }
 }
 

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.14)
 project(MarketMakerBot VERSION 1.0.0 LANGUAGES CXX)
 
 # Set C++ standard
@@ -48,6 +48,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(websocketpp)
 
+# Quill - High-performance async logging
+set(QUILL_BUILD_EXAMPLES OFF CACHE BOOL "Disable Quill examples")
+set(QUILL_BUILD_TESTS OFF CACHE BOOL "Disable Quill tests")
+set(QUILL_BUILD_BENCHMARKS OFF CACHE BOOL "Disable Quill benchmarks")
+
+FetchContent_Declare(
+    quill
+    GIT_REPOSITORY https://github.com/odygrd/quill.git
+    GIT_TAG v7.5.0
+)
+FetchContent_MakeAvailable(quill)
+
 add_compile_definitions(ASIO_STANDALONE _WEBSOCKETPP_CPP11_STL_)
 
 # Include directories
@@ -64,6 +76,7 @@ set(SOURCES
     src/core/config.cpp
     src/core/config_loader.cpp
     src/core/logger.cpp
+    src/core/app_logger.cpp
     # Exchange
     src/exchange/exchange_factory.cpp
     src/exchange/binance_exchange.cpp
@@ -95,6 +108,7 @@ target_link_libraries(market_maker
     OpenSSL::Crypto
     CURL::libcurl
     jsoncpp_lib
+    quill::quill
 )
 
 # Installation

@@ -1,7 +1,14 @@
 #include "trading/pnl_tracker.h"
+#include "core/app_logger.h"
 #include <cmath>
-#include <iostream>
 #include <algorithm>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("risk");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -17,7 +24,7 @@ void PnLTracker::on_trade(double entry_price, double exit_price, double quantity
 
     if (!std::isfinite(entry_price) || !std::isfinite(exit_price) ||
         !std::isfinite(quantity) || quantity <= 0) {
-        std::cerr << "[P&L] Invalid trade data - skipping" << std::endl;
+        LOG_WARNING(get_logger(), "{}", "[P&L] Invalid trade data - skipping");
         return;
     }
 
@@ -36,24 +43,21 @@ void PnLTracker::on_trade(double entry_price, double exit_price, double quantity
     double current_drawdown = realized_pnl_ - peak_pnl_;
     max_drawdown_hit_ = std::min(max_drawdown_hit_, current_drawdown);
 
-    std::cout << "[P&L] Trade: gross=" << gross_pnl << " fee=" << fee
-              << " net=" << net_pnl << " | Daily: " << daily_pnl_
-              << " | Total: " << realized_pnl_ << std::endl;
+    LOG_INFO(get_logger(), "[P&L] Trade: gross={:.4f} fee={:.4f} net={:.4f} | Daily: {:.4f} | Total: {:.4f}",
+             gross_pnl, fee, net_pnl, daily_pnl_, realized_pnl_);
 }
 
 bool PnLTracker::is_within_limits() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (daily_pnl_ < max_daily_loss_) {
-        std::cerr << "[RISK] Daily loss limit breached: " << daily_pnl_
-                  << " < " << max_daily_loss_ << std::endl;
+        LOG_ERROR(get_logger(), "[RISK] Daily loss limit breached: {} < {}", daily_pnl_, max_daily_loss_);
         return false;
     }
 
     double current_drawdown = realized_pnl_ - peak_pnl_;
     if (current_drawdown < max_drawdown_) {
-        std::cerr << "[RISK] Max drawdown breached: " << current_drawdown
-                  << " < " << max_drawdown_ << std::endl;
+        LOG_ERROR(get_logger(), "[RISK] Max drawdown breached: {} < {}", current_drawdown, max_drawdown_);
         return false;
     }
 
@@ -83,7 +87,7 @@ double PnLTracker::get_max_drawdown_hit() const {
 void PnLTracker::reset_daily() {
     std::lock_guard<std::mutex> lock(mutex_);
     daily_pnl_ = 0.0;
-    std::cout << "[P&L] Daily counters reset" << std::endl;
+    LOG_INFO(get_logger(), "{}", "[P&L] Daily counters reset");
 }
 
 } // namespace MarketMaker

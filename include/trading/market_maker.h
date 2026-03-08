@@ -9,6 +9,7 @@
 #include "trading/volatility_tracker.h"
 #include "network/user_data_stream.h"
 #include "core/logger.h"
+#include "quill/Logger.h"
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -42,6 +43,7 @@ private:
     std::shared_ptr<VolatilityTracker> volatility_tracker_;
     std::unique_ptr<UserDataStream> user_data_stream_;
     std::shared_ptr<Logger> logger_;
+    quill::Logger* quill_logger_ = nullptr;
 
     // State
     std::atomic<bool> running_{false};

@@ -1,7 +1,14 @@
 #include "trading/rate_limiter.h"
+#include "core/app_logger.h"
 #include <thread>
-#include <iostream>
 #include <algorithm>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("trading");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -85,14 +92,9 @@ void OrderRateLimiter::log_status() const {
     auto order_stats = order_limiter_.get_stats();
     auto cancel_stats = cancel_limiter_.get_stats();
 
-    std::cout << "[RATE LIMIT] Orders: " << order_stats.requests_in_last_second
-              << "/s (limit: 10/s), Cancels: " << cancel_stats.requests_in_last_second
-              << "/s (limit: 20/s)";
-
-    if (order_stats.is_limited || cancel_stats.is_limited) {
-        std::cout << " [THROTTLED]";
-    }
-    std::cout << std::endl;
+    LOG_INFO(get_logger(), "[RATE LIMIT] Orders: {}/s (limit: 10/s), Cancels: {}/s (limit: 20/s){}",
+             order_stats.requests_in_last_second, cancel_stats.requests_in_last_second,
+             (order_stats.is_limited || cancel_stats.is_limited) ? " [THROTTLED]" : "");
 }
 
 } // namespace MarketMaker

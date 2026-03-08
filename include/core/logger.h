@@ -2,14 +2,7 @@
 #define LOGGER_H
 
 #include <string>
-#include <fstream>
-#include <mutex>
-#include <memory>
-#include <chrono>
-#include <queue>
-#include <thread>
-#include <atomic>
-#include <condition_variable>
+#include "quill/Logger.h"
 
 namespace MarketMaker {
 
@@ -35,24 +28,7 @@ public:
     void flush();
 
 private:
-    std::string log_file_;
-    bool verbose_;
-    LogLevel min_level_;
-
-    std::ofstream file_stream_;
-    std::mutex file_mutex_;
-
-    // Async logging
-    std::queue<std::string> log_queue_;
-    std::mutex queue_mutex_;
-    std::condition_variable cv_;
-    std::thread writer_thread_;
-    std::atomic<bool> running_;
-
-    void writer_loop();
-    std::string format_timestamp();
-    std::string level_to_string(LogLevel level);
-    std::string format_log_entry(LogLevel level, const std::string& message);
+    quill::Logger* quill_logger_ = nullptr;
 };
 
 } // namespace MarketMaker

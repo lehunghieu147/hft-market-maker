@@ -1,7 +1,6 @@
 #include "trading/order_manager.h"
-#include <iostream>
+#include "core/app_logger.h"
 #include <sstream>
-#include <iomanip>
 #include <cmath>
 #include <random>
 
@@ -10,6 +9,7 @@ namespace MarketMaker {
 OrderManager::OrderManager(std::shared_ptr<IExchange> exchange, const Config& config,
                            std::shared_ptr<RiskManager> risk_manager)
     : exchange_(exchange), config_(config), risk_manager_(risk_manager) {
+    logger_ = AppLogger::get("trading");
     metrics_.start_time = std::chrono::steady_clock::now();
 }
 
@@ -23,7 +23,7 @@ bool OrderManager::place_market_maker_orders(double mid_price) {
 
 bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono::steady_clock::time_point& orderbook_time) {
     if (mid_price <= 0) {
-        std::cerr << "Invalid mid price: " << mid_price << std::endl;
+        LOG_ERROR(logger_, "Invalid mid price: {}", mid_price);
         return false;
     }
 
@@ -44,29 +44,10 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
     auto t2 = std::chrono::steady_clock::now();
     auto calc_time = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
 
-    // Price calculation logging
-    std::cout << "\n=====================================================" << std::endl;
-    std::cout << "  PRICE CALCULATION" << std::endl;
-    std::cout << "=====================================================" << std::endl;
-    std::cout << "  Mid Price:       $" << std::fixed << std::setprecision(5)
-              << mid_price << " (from OrderBook)" << std::endl;
-    std::cout << "  Spread Config:    " << std::fixed << std::setprecision(1)
-              << (spread_multiplier * 100) << "%" << std::endl;
-    std::cout << "-----------------------------------------------------" << std::endl;
-    std::cout << "  BUY Order (BID):" << std::endl;
-    std::cout << "    Formula: MidPrice × (1 - Spread)" << std::endl;
-    std::cout << "    Calc: " << std::fixed << std::setprecision(5) << mid_price << " × " << std::setprecision(4)
-              << bid_multiplier << " = " << std::setprecision(7) << bid_price_raw
-              << " -> $" << std::setprecision(5) << bid_price << std::endl;
-    std::cout << "-----------------------------------------------------" << std::endl;
-    std::cout << "  SELL Order (ASK):" << std::endl;
-    std::cout << "    Formula: MidPrice × (1 + Spread)" << std::endl;
-    std::cout << "    Calc: " << std::fixed << std::setprecision(5) << mid_price << " × " << std::setprecision(4)
-              << ask_multiplier << " = " << std::setprecision(7) << ask_price_raw
-              << " -> $" << std::setprecision(5) << ask_price << std::endl;
-    std::cout << "-----------------------------------------------------" << std::endl;
-    std::cout << "  Calc Time: " << calc_time << " us" << std::endl;
-    std::cout << "=====================================================" << std::endl;
+    LOG_DEBUG(logger_, "PRICE_CALC mid={:.5f} spread={:.1f}% bid_raw={:.7f} bid={:.5f} "
+              "ask_raw={:.7f} ask={:.5f} calc_time={}us",
+              mid_price, spread_multiplier * 100, bid_price_raw, bid_price,
+              ask_price_raw, ask_price, calc_time);
 
     // OPTIMIZATION: Check if price change is significant enough
     const double PRICE_CHANGE_THRESHOLD = 0.0001; // 0.01% minimum change
@@ -77,21 +58,17 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
 
         // Check if we need to update orders
         if (!active_bid_order_ || !active_ask_order_) {
-            // No active orders, must place new ones
             need_update = true;
-            std::cout << "[UPDATE] No active orders, placing new ones" << std::endl;
+            LOG_DEBUG(logger_, "{}", "No active orders, placing new ones");
         } else {
-            // Check if price changed significantly
             double price_change_ratio = std::abs(mid_price - last_mid_price_) / last_mid_price_;
             if (price_change_ratio > PRICE_CHANGE_THRESHOLD) {
                 need_update = true;
-                std::cout << "[UPDATE] Price change " << std::fixed << std::setprecision(5)
-                          << (price_change_ratio * 100)
-                          << "% exceeds threshold, updating orders" << std::endl;
+                LOG_DEBUG(logger_, "Price change {:.5f}% exceeds threshold, updating orders",
+                          price_change_ratio * 100);
             } else {
-                std::cout << "[SKIP] Price change " << std::fixed << std::setprecision(5)
-                          << (price_change_ratio * 100)
-                          << "% below threshold, skipping update" << std::endl;
+                LOG_DEBUG(logger_, "Price change {:.5f}% below threshold, skipping update",
+                          price_change_ratio * 100);
                 return true; // Skip update
             }
         }
@@ -103,7 +80,7 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
 
     // Risk management gate
     if (risk_manager_ && !risk_manager_->should_trade()) {
-        std::cerr << "[ORDER] Trading blocked by risk manager" << std::endl;
+        LOG_ERROR(logger_, "{}", "Trading blocked by risk manager");
         return false;
     }
 
@@ -111,23 +88,20 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
     auto validation = order_validator_.validate_market_maker_orders(
         bid_price, ask_price, config_.order_size, mid_price);
     if (!validation.is_valid) {
-        std::cerr << "[ORDER] Validation failed: " << validation.error_message << std::endl;
+        LOG_ERROR(logger_, "Validation failed: {}", validation.error_message);
         return false;
     }
 
     // Position limit check (atomic pair check under single lock)
     if (risk_manager_) {
         if (!risk_manager_->position_tracker().can_place_pair(config_.order_size, config_.order_size)) {
-            std::cerr << "[ORDER] Position limit would be exceeded" << std::endl;
+            LOG_ERROR(logger_, "{}", "Position limit would be exceeded");
             return false;
         }
     }
 
-    std::cout << "\n=========== PLACING NEW ORDERS ===========" << std::endl;
-    std::cout << "  Mid Price: $" << std::fixed << std::setprecision(5) << mid_price << std::endl;
-    std::cout << "  BID (Buy):  $" << bid_price << " [Qty: " << config_.order_size << "]" << std::endl;
-    std::cout << "  ASK (Sell): $" << ask_price << " [Qty: " << config_.order_size << "]" << std::endl;
-    std::cout << "==========================================" << std::endl;
+    LOG_INFO(logger_, "PLACING_ORDERS mid={:.5f} bid={:.5f} ask={:.5f} qty={}",
+             mid_price, bid_price, ask_price, config_.order_size);
 
     // OPTIMIZATION: Try to modify existing orders first if they exist
     bool bid_success = false;
@@ -166,7 +140,7 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         if (cancel_futures[i].wait_for(timeout) == std::future_status::ready) {
             cancel_futures[i].get();
         } else {
-            std::cerr << "[WARNING] Cancel order timeout after 100ms" << std::endl;
+            LOG_WARNING(logger_, "{}", "Cancel order timeout after 100ms");
         }
     }
 
@@ -183,7 +157,7 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
 
     auto t4 = std::chrono::steady_clock::now();
     auto cancel_time = std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
-    std::cout << "[LATENCY] Cancel orders: " << cancel_time << " μs" << std::endl;
+    LOG_DEBUG(logger_, "Cancel orders latency: {}us", cancel_time);
 
     // OPTIMIZATION: Use threads instead of async to avoid overhead
     auto t5 = std::chrono::steady_clock::now();
@@ -192,7 +166,7 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         bid_success = place_order(OrderSide::BUY, bid_price, config_.order_size);
         auto thread_end = std::chrono::steady_clock::now();
         auto thread_time = std::chrono::duration_cast<std::chrono::microseconds>(thread_end - thread_start).count();
-        std::cout << "[LATENCY] BID order placement: " << thread_time << " μs" << std::endl;
+        LOG_DEBUG(logger_, "BID order placement: {}us", thread_time);
     });
 
     std::thread ask_thread([this, ask_price, &ask_success]() {
@@ -200,7 +174,7 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         ask_success = place_order(OrderSide::SELL, ask_price, config_.order_size);
         auto thread_end = std::chrono::steady_clock::now();
         auto thread_time = std::chrono::duration_cast<std::chrono::microseconds>(thread_end - thread_start).count();
-        std::cout << "[LATENCY] ASK order placement: " << thread_time << " μs" << std::endl;
+        LOG_DEBUG(logger_, "ASK order placement: {}us", thread_time);
     });
 
     // Wait for both threads
@@ -208,24 +182,18 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
     ask_thread.join();
     auto t6 = std::chrono::steady_clock::now();
     auto thread_time = std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count();
-    std::cout << "[LATENCY] Total thread execution: " << thread_time << " μs" << std::endl;
+    LOG_DEBUG(logger_, "Total thread execution: {}us", thread_time);
 
     last_mid_price_ = mid_price;
     last_order_update_ = std::chrono::steady_clock::now();
 
     // Display order placement summary
     if (bid_success && ask_success) {
-        std::cout << "\n=============================================" << std::endl;
-        std::cout << "  BOTH ORDERS PLACED SUCCESSFULLY" << std::endl;
-        std::cout << "=============================================" << std::endl;
+        LOG_INFO(logger_, "{}", "BOTH ORDERS PLACED SUCCESSFULLY");
     } else if (bid_success || ask_success) {
-        std::cout << "\n=============================================" << std::endl;
-        std::cout << "  PARTIAL SUCCESS: Only " << (bid_success ? "BID" : "ASK") << " order placed" << std::endl;
-        std::cout << "=============================================" << std::endl;
+        LOG_WARNING(logger_, "PARTIAL SUCCESS: Only {} order placed", bid_success ? "BID" : "ASK");
     } else {
-        std::cout << "\n=============================================" << std::endl;
-        std::cout << "  FAILED: No orders were placed" << std::endl;
-        std::cout << "=============================================" << std::endl;
+        LOG_ERROR(logger_, "{}", "FAILED: No orders were placed");
     }
 
     update_metrics(start_time, orderbook_time, bid_success, ask_success);
@@ -283,9 +251,8 @@ bool OrderManager::update_orders_if_needed(double new_mid_price, const std::chro
     // Timestamp validation: reject stale orderbook data (>5 seconds old)
     auto age = std::chrono::steady_clock::now() - orderbook_time;
     if (age > std::chrono::seconds(5)) {
-        std::cerr << "[ORDER] Rejecting stale orderbook data ("
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(age).count()
-                  << "ms old)" << std::endl;
+        auto ms_age = std::chrono::duration_cast<std::chrono::milliseconds>(age).count();
+        LOG_ERROR(logger_, "Rejecting stale orderbook data ({}ms old)", ms_age);
         return false;
     }
 
@@ -293,8 +260,8 @@ bool OrderManager::update_orders_if_needed(double new_mid_price, const std::chro
         return true;  // No update needed
     }
 
-    std::cout << "Mid price changed from " << last_mid_price_.load()
-              << " to " << new_mid_price << " - updating orders" << std::endl;
+    LOG_DEBUG(logger_, "Mid price changed from {} to {} - updating orders",
+              last_mid_price_.load(), new_mid_price);
 
     return place_market_maker_orders(new_mid_price, orderbook_time);
 }
@@ -327,21 +294,14 @@ double OrderManager::format_quantity(double quantity) const {
 
 bool OrderManager::place_order(OrderSide side, double price, double quantity) {
     std::string client_order_id = generate_client_order_id(side);
+    const char* side_str = (side == OrderSide::BUY) ? "BID" : "ASK";
 
     auto order_result = exchange_->place_limit_order(
-        config_.symbol,
-        side,
-        price,
-        quantity,
-        client_order_id
-    );
+        config_.symbol, side, price, quantity, client_order_id);
 
     if (!order_result) {
-        std::cerr << "Failed to place " << (side == OrderSide::BUY ? "BID" : "ASK")
-                  << " order at " << price << std::endl;
-
+        LOG_ERROR(logger_, "Failed to place {} order at {}", side_str, price);
         if (risk_manager_) risk_manager_->on_error();
-
         std::lock_guard<std::mutex> lock(metrics_mutex_);
         metrics_.failed_orders++;
         return false;
@@ -349,7 +309,6 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
 
     if (risk_manager_) {
         risk_manager_->on_success();
-        // Position tracking is done via UserDataStream on_fill_event (real fills)
     }
 
     std::lock_guard<std::mutex> lock(orders_mutex_);
@@ -359,10 +318,8 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
         active_ask_order_ = std::make_shared<Order>(*order_result);
     }
 
-    std::cout << "Placed " << (side == OrderSide::BUY ? "BID" : "ASK")
-              << " order: ID=" << order_result->order_id
-              << ", Price=" << std::fixed << std::setprecision(2) << price
-              << ", Qty=" << std::fixed << std::setprecision(2) << quantity << std::endl;
+    LOG_INFO(logger_, "Placed {} order: ID={} Price={:.2f} Qty={:.2f}",
+             side_str, order_result->order_id, price, quantity);
 
     return true;
 }
@@ -379,16 +336,16 @@ bool OrderManager::cancel_order(const std::shared_ptr<Order>& order) {
         auto status = exchange_->get_order_status(config_.symbol, order->order_id);
         if (status && (status->status == OrderStatus::FILLED ||
                        status->status == OrderStatus::CANCELED)) {
-            std::cout << "[ORDER] Cancel failed but order already "
-                      << (status->status == OrderStatus::FILLED ? "FILLED" : "CANCELED")
-                      << ": " << order->order_id << std::endl;
+            LOG_INFO(logger_, "Cancel failed but order already {}: {}",
+                     (status->status == OrderStatus::FILLED ? "FILLED" : "CANCELED"),
+                     order->order_id);
             return true;  // Not an error
         }
-        std::cerr << "Failed to cancel order: " << order->order_id << std::endl;
+        LOG_ERROR(logger_, "Failed to cancel order: {}", order->order_id);
         return false;
     }
 
-    std::cout << "Canceled order: " << order->order_id << std::endl;
+    LOG_DEBUG(logger_, "Canceled order: {}", order->order_id);
     return true;
 }
 
@@ -432,19 +389,9 @@ void OrderManager::update_metrics(const std::chrono::steady_clock::time_point& s
     metrics_.update_reaction_latency(reaction_latency_ms);
     metrics_.successful_orders += (bid_success ? 1 : 0) + (ask_success ? 1 : 0);
 
-    // Display reaction latency only
-    std::cout << "\n================================================" << std::endl;
-    std::cout << "  LATENCY METRICS" << std::endl;
-    std::cout << "================================================" << std::endl;
-    std::cout << "  Reaction Latency: " << std::fixed << std::setprecision(3)
-              << reaction_latency_ms << " ms (" << reaction_latency_us << " us)" << std::endl;
-
-    if (reaction_latency_ms < 50) {
-        std::cout << "  Status: TARGET MET (< 50ms requirement)" << std::endl;
-    } else {
-        std::cout << "  Status: Above target (optimizing...)" << std::endl;
-    }
-    std::cout << "================================================\n" << std::endl;
+    LOG_INFO(logger_, "LATENCY reaction={:.3f}ms ({}us) target={}",
+             reaction_latency_ms, reaction_latency_us,
+             reaction_latency_ms < 50 ? "MET" : "ABOVE");
 }
 
 std::string OrderManager::generate_client_order_id(OrderSide side) {
@@ -490,8 +437,8 @@ void OrderManager::on_fill_event(const std::string& order_id,
         (status == OrderStatus::FILLED || status == OrderStatus::PARTIALLY_FILLED)) {
         risk_manager_->position_tracker().on_fill(side, price, quantity);
 
-        std::cout << "[FILL] Real fill: " << (side == OrderSide::BUY ? "BUY" : "SELL")
-                  << " " << quantity << " @ " << price << std::endl;
+        LOG_INFO(logger_, "FILL: {} {} @ {}",
+                 (side == OrderSide::BUY ? "BUY" : "SELL"), quantity, price);
     }
 }
 

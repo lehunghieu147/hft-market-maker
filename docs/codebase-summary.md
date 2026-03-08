@@ -2,9 +2,9 @@
 
 ## Project Stats
 - **Language**: C++17
-- **Build**: CMake 3.10+ with FetchContent
-- **Source files**: 19 (.h) + 15 (.cpp)
-- **Dependencies**: OpenSSL, CURL, JsonCpp, Asio, WebSocket++
+- **Build**: CMake 3.14+ with FetchContent
+- **Source files**: 21 (.h) + 16 (.cpp)
+- **Dependencies**: OpenSSL, CURL, JsonCpp, Asio, WebSocket++, Quill v7.5.0
 
 ## File Map
 
@@ -14,7 +14,8 @@
 | `config.h` | ~97 | Config struct, ExchangeEndpoints, exchange URL database |
 | `config_loader.h/.cpp` | ~274 | JSON config loading, env var merge, validation |
 | `types.h` | ~116 | OrderSide, OrderStatus, PriceLevel, OrderBook (VWAP, imbalance), Order, LatencyMetrics |
-| `logger.h/.cpp` | ~50 | File + console logging with log levels |
+| `app_logger.h/.cpp` | ~70 | AppLogger singleton, Quill init/get/shutdown, RotatingFileSink config |
+| `logger.h/.cpp` | ~50 | Logger wrapper, delegates to Quill (legacy interface) |
 
 ### Exchange (`include/exchange/`, `src/exchange/`)
 | File | Lines | Purpose |
@@ -60,6 +61,8 @@ cmake --build build -j$(nproc)
 6. **Signed fee rates**: Maker fee can be negative (rebate), correctly reduces trading cost
 7. **Thread join before SSL free**: Prevents use-after-free in UserDataStream cleanup
 8. **SSL certificate verification**: VERIFY_PEER enabled for User Data Stream connections
+9. **Quill async logger**: Lock-free ring buffer provides ~1-5µs log latency vs ~10-50µs for std::cout, zero blocking on call-site
+10. **Named loggers per domain**: "trading", "network", "core", "risk" enable selective debugging and monitoring
 
 ## Improvement History
 
@@ -70,3 +73,4 @@ cmake --build build -j$(nproc)
 | 03 | `4f0d351` | Risk management framework (position, P&L, kill switch) |
 | 04 | `ff4c88d` | Trading logic (UserDataStream, volatility, VWAP, fill tracking) |
 | 05 | — | Documentation and final polish |
+| 06 | — | Migrate logging: std::cout/cerr → Quill v7.5.0 async logger (16 files) |

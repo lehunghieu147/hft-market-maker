@@ -1,10 +1,17 @@
 #include "network/websocket_trading_client.h"
+#include "core/app_logger.h"
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 #include <websocketpp/common/thread.hpp>
-#include <iostream>
 #include <sstream>
 #include <iomanip>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("network");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -52,7 +59,7 @@ WebSocketTradingClient::WebSocketTradingClient(const std::string& api_key, const
             ctx->set_default_verify_paths();
 
         } catch (std::exception& e) {
-            std::cerr << "[SSL] Context setup error: " << e.what() << std::endl;
+            LOG_ERROR(get_logger(), "[SSL] Context setup error: {}", e.what());
         }
 
         return ctx;
@@ -75,7 +82,7 @@ WebSocketTradingClient::WebSocketTradingClient(const std::string& api_key, const
         this->on_message(hdl, msg);
     });
 
-    std::cout << "WebSocket Trading Client initialized" << std::endl;
+    LOG_INFO(get_logger(), "{}", "WebSocket Trading Client initialized");
 }
 
 WebSocketTradingClient::~WebSocketTradingClient() {
@@ -92,7 +99,7 @@ bool WebSocketTradingClient::connect(const std::string& url) {
         auto con = ws_client_->get_connection(url, ec);
 
         if (ec) {
-            std::cerr << "Connection initialization error: " << ec.message() << std::endl;
+            LOG_ERROR(get_logger(), "Connection initialization error: {}", ec.message());
             return false;
         }
 
@@ -111,7 +118,7 @@ bool WebSocketTradingClient::connect(const std::string& url) {
         }
 
         if (!connected_) {
-            std::cerr << "Connection timeout after 2 seconds" << std::endl;
+            LOG_ERROR(get_logger(), "{}", "Connection timeout after 2 seconds");
             disconnect();
             return false;
         }
@@ -124,7 +131,7 @@ bool WebSocketTradingClient::connect(const std::string& url) {
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "Connection error: " << e.what() << std::endl;
+        LOG_ERROR(get_logger(), "Connection error: {}", e.what());
         return false;
     }
 }
@@ -134,7 +141,7 @@ void WebSocketTradingClient::disconnect() {
         return;
     }
 
-    std::cout << "[WS Trading] Disconnecting..." << std::endl;
+    LOG_INFO(get_logger(), "{}", "[WS Trading] Disconnecting...");
 
     running_ = false;
     auto was_connected = connected_.load();
@@ -146,12 +153,12 @@ void WebSocketTradingClient::disconnect() {
             websocketpp::lib::error_code ec;
             ws_client_->close(connection_hdl_, websocketpp::close::status::going_away, "Client disconnect", ec);
             if (ec) {
-                std::cerr << "[WS Trading] Close error: " << ec.message() << std::endl;
+                LOG_ERROR(get_logger(), "[WS Trading] Close error: {}", ec.message());
             }
             // Give time for close handshake
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         } catch (const std::exception& e) {
-            std::cerr << "[WS Trading] Exception during close: " << e.what() << std::endl;
+            LOG_ERROR(get_logger(), "[WS Trading] Exception during close: {}", e.what());
         }
     }
 
@@ -160,18 +167,18 @@ void WebSocketTradingClient::disconnect() {
         try {
             ws_client_->stop();
         } catch (const std::exception& e) {
-            std::cerr << "[WS Trading] Exception during stop: " << e.what() << std::endl;
+            LOG_ERROR(get_logger(), "[WS Trading] Exception during stop: {}", e.what());
         }
     }
 
     // Wait for threads with timeout
     if (ws_thread_.joinable()) {
-        std::cout << "[WS Trading] Waiting for event loop thread..." << std::endl;
+        LOG_DEBUG(get_logger(), "{}", "[WS Trading] Waiting for event loop thread...");
         ws_thread_.join();
     }
 
     if (reconnect_thread_.joinable()) {
-        std::cout << "[WS Trading] Waiting for reconnect thread..." << std::endl;
+        LOG_DEBUG(get_logger(), "{}", "[WS Trading] Waiting for reconnect thread...");
         reconnect_thread_.join();
     }
 
@@ -188,14 +195,14 @@ void WebSocketTradingClient::disconnect() {
         pending_requests_.clear();
     }
 
-    std::cout << "[WS Trading] Disconnected cleanly" << std::endl;
+    LOG_INFO(get_logger(), "{}", "[WS Trading] Disconnected cleanly");
 }
 
 void WebSocketTradingClient::run_event_loop() {
     try {
         ws_client_->run();
     } catch (const std::exception& e) {
-        std::cerr << "Event loop error: " << e.what() << std::endl;
+        LOG_ERROR(get_logger(), "Event loop error: {}", e.what());
     }
 }
 
@@ -206,7 +213,7 @@ void WebSocketTradingClient::handle_reconnect() {
 
             if (!running_) break;
 
-            std::cout << "Attempting to reconnect..." << std::endl;
+            LOG_INFO(get_logger(), "{}", "Attempting to reconnect...");
 
             // Try to reconnect
             // Note: This is simplified - in production you'd want to recreate the connection properly
@@ -222,7 +229,7 @@ void WebSocketTradingClient::handle_reconnect() {
 }
 
 void WebSocketTradingClient::on_open([[maybe_unused]] websocketpp::connection_hdl hdl) {
-    std::cout << "WebSocket Trading connection opened" << std::endl;
+    LOG_INFO(get_logger(), "{}", "WebSocket Trading connection opened");
     connected_ = true;
 
     if (connection_handler_) {
@@ -231,7 +238,7 @@ void WebSocketTradingClient::on_open([[maybe_unused]] websocketpp::connection_hd
 }
 
 void WebSocketTradingClient::on_close([[maybe_unused]] websocketpp::connection_hdl hdl) {
-    std::cout << "WebSocket Trading connection closed" << std::endl;
+    LOG_INFO(get_logger(), "{}", "WebSocket Trading connection closed");
     connected_ = false;
 
     if (connection_handler_) {
@@ -240,7 +247,7 @@ void WebSocketTradingClient::on_close([[maybe_unused]] websocketpp::connection_h
 }
 
 void WebSocketTradingClient::on_fail([[maybe_unused]] websocketpp::connection_hdl hdl) {
-    std::cerr << "WebSocket Trading connection failed" << std::endl;
+    LOG_ERROR(get_logger(), "{}", "WebSocket Trading connection failed");
     connected_ = false;
 
     if (connection_handler_) {
@@ -257,7 +264,7 @@ void WebSocketTradingClient::process_message(const std::string& message) {
     Json::Value response;
 
     if (!reader.parse(message, response)) {
-        std::cerr << "Failed to parse WebSocket message: " << message << std::endl;
+        LOG_ERROR(get_logger(), "Failed to parse WebSocket message: {}", message.substr(0, 200));
         return;
     }
 
@@ -311,17 +318,13 @@ void WebSocketTradingClient::handle_order_response(const Json::Value& response) 
     if (result.isMember("orderId")) {
         metrics_.successful_orders++;
 
-        std::cout << "Order successful - ID: " << result["orderId"].asString();
-        if (result.isMember("side")) {
-            std::cout << ", Side: " << result["side"].asString();
-        }
-        if (result.isMember("price")) {
-            std::cout << ", Price: " << result["price"].asString();
-        }
-        std::cout << std::endl;
+        LOG_INFO(get_logger(), "Order successful - ID: {} Side: {} Price: {}",
+                 result["orderId"].asString(),
+                 result.isMember("side") ? result["side"].asString() : "N/A",
+                 result.isMember("price") ? result["price"].asString() : "N/A");
     } else if (result.isMember("status") && result["status"].asString() == "CANCELED") {
         metrics_.cancelled_orders++;
-        std::cout << "Order cancelled successfully" << std::endl;
+        LOG_INFO(get_logger(), "{}", "Order cancelled successfully");
     }
 }
 
@@ -333,8 +336,8 @@ void WebSocketTradingClient::handle_error_response(const Json::Value& response) 
     metrics_.failed_orders++;
 
     const Json::Value& error = response["error"];
-    std::cerr << "WebSocket API Error - Code: " << error["code"].asInt()
-              << ", Message: " << error["msg"].asString() << std::endl;
+    LOG_ERROR(get_logger(), "WebSocket API Error - Code: {} Message: {}",
+              error["code"].asInt(), error["msg"].asString());
 
     if (error_handler_) {
         error_handler_(error["msg"].asString());
@@ -403,7 +406,7 @@ std::optional<Json::Value> WebSocketTradingClient::send_request_and_wait(
     std::chrono::milliseconds timeout) {
 
     if (!connected_) {
-        std::cerr << "Not connected to WebSocket" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Not connected to WebSocket");
         return std::nullopt;
     }
 
@@ -429,7 +432,7 @@ std::optional<Json::Value> WebSocketTradingClient::send_request_and_wait(
     ws_client_->send(connection_hdl_, message, websocketpp::frame::opcode::text, ec);
 
     if (ec) {
-        std::cerr << "Failed to send WebSocket message: " << ec.message() << std::endl;
+        LOG_ERROR(get_logger(), "Failed to send WebSocket message: {}", ec.message());
 
         // Remove pending request
         {
@@ -443,7 +446,7 @@ std::optional<Json::Value> WebSocketTradingClient::send_request_and_wait(
     // Wait for response
     auto future = pending->promise.get_future();
     if (future.wait_for(timeout) == std::future_status::timeout) {
-        std::cerr << "Request timeout for method: " << method << std::endl;
+        LOG_ERROR(get_logger(), "Request timeout for method: {}", method);
 
         // Mark as not waiting and remove
         {
@@ -482,7 +485,7 @@ void WebSocketTradingClient::send_request_async(
     ws_client_->send(connection_hdl_, message, websocketpp::frame::opcode::text, ec);
 
     if (ec) {
-        std::cerr << "Failed to send async WebSocket message: " << ec.message() << std::endl;
+        LOG_ERROR(get_logger(), "Failed to send async WebSocket message: {}", ec.message());
         if (callback) {
             Json::Value error;
             error["error"] = ec.message();

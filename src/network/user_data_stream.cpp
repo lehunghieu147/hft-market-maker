@@ -1,5 +1,5 @@
 #include "network/user_data_stream.h"
-#include <iostream>
+#include "core/app_logger.h"
 #include <cstring>
 #include <curl/curl.h>
 #include <openssl/ssl.h>
@@ -9,6 +9,13 @@
 #include <sys/socket.h>
 #include <random>
 #include <algorithm>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("network");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -44,7 +51,7 @@ bool UserDataStream::start() {
     if (running_.load()) return true;
 
     if (!create_listen_key()) {
-        std::cerr << "[USER_STREAM] Failed to create listen key" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Failed to create listen key");
         return false;
     }
 
@@ -53,8 +60,7 @@ bool UserDataStream::start() {
     stream_thread_ = std::thread([this]() { stream_loop(); });
     keepalive_thread_ = std::thread([this]() { keepalive_loop(); });
 
-    std::cout << "[USER_STREAM] Started with listen key: "
-              << listen_key_.substr(0, 8) << "..." << std::endl;
+    LOG_INFO(get_logger(), "[USER_STREAM] Started with listen key: {}...", listen_key_.substr(0, 8));
     return true;
 }
 
@@ -93,7 +99,7 @@ void UserDataStream::stop() {
     }
 
     delete_listen_key();
-    std::cout << "[USER_STREAM] Stopped" << std::endl;
+    LOG_INFO(get_logger(), "{}", "[USER_STREAM] Stopped");
 }
 
 bool UserDataStream::create_listen_key() {
@@ -119,8 +125,7 @@ bool UserDataStream::create_listen_key() {
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
-        std::cerr << "[USER_STREAM] CURL error creating listen key: "
-                  << curl_easy_strerror(res) << std::endl;
+        LOG_ERROR(get_logger(), "[USER_STREAM] CURL error creating listen key: {}", curl_easy_strerror(res));
         return false;
     }
 
@@ -129,7 +134,7 @@ bool UserDataStream::create_listen_key() {
     std::istringstream stream(response);
     std::string errors;
     if (!Json::parseFromStream(builder, stream, &root, &errors)) {
-        std::cerr << "[USER_STREAM] Failed to parse listen key response" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Failed to parse listen key response");
         return false;
     }
 
@@ -138,7 +143,7 @@ bool UserDataStream::create_listen_key() {
         return true;
     }
 
-    std::cerr << "[USER_STREAM] No listenKey in response: " << response << std::endl;
+    LOG_ERROR(get_logger(), "[USER_STREAM] No listenKey in response: {}", response);
     return false;
 }
 
@@ -225,7 +230,7 @@ bool UserDataStream::connect_websocket() {
     std::string port_str = std::to_string(port);
 
     if (getaddrinfo(host.c_str(), port_str.c_str(), &hints, &result) != 0) {
-        std::cerr << "[USER_STREAM] DNS resolution failed for: " << host << std::endl;
+        LOG_ERROR(get_logger(), "[USER_STREAM] DNS resolution failed for: {}", host);
         return false;
     }
 
@@ -266,7 +271,7 @@ bool UserDataStream::connect_websocket() {
     SSL_set_tlsext_host_name(static_cast<SSL*>(ssl_), host.c_str());
 
     if (SSL_connect(static_cast<SSL*>(ssl_)) <= 0) {
-        std::cerr << "[USER_STREAM] SSL handshake failed" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "[USER_STREAM] SSL handshake failed");
         cleanup();
         return false;
     }
@@ -317,13 +322,13 @@ bool UserDataStream::connect_websocket() {
 
     std::string response(buf);
     if (response.find("101") == std::string::npos) {
-        std::cerr << "[USER_STREAM] WebSocket upgrade failed: " << response << std::endl;
+        LOG_ERROR(get_logger(), "[USER_STREAM] WebSocket upgrade failed: {}", response);
         cleanup();
         return false;
     }
 
     connected_.store(true);
-    std::cout << "[USER_STREAM] WebSocket connected" << std::endl;
+    LOG_INFO(get_logger(), "{}", "[USER_STREAM] WebSocket connected");
     return true;
 }
 
@@ -360,7 +365,7 @@ std::string UserDataStream::read_websocket_frame(std::vector<uint8_t>& ping_payl
     // Reject oversized frames (max 16 MB)
     constexpr uint64_t MAX_PAYLOAD = 16 * 1024 * 1024;
     if (payload_len > MAX_PAYLOAD) {
-        std::cerr << "[USER_STREAM] Rejecting oversized frame: " << payload_len << " bytes" << std::endl;
+        LOG_ERROR(get_logger(), "[USER_STREAM] Rejecting oversized frame: {} bytes", payload_len);
         connected_.store(false);
         return "";
     }
@@ -447,7 +452,7 @@ void UserDataStream::stream_loop() {
     while (running_.load()) {
         if (!connected_.load()) {
             if (!connect_websocket()) {
-                std::cerr << "[USER_STREAM] Connection failed, retrying in 5s..." << std::endl;
+                LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Connection failed, retrying in 5s...");
                 for (int i = 0; i < 50 && running_.load(); ++i) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
@@ -469,7 +474,7 @@ void UserDataStream::stream_loop() {
         }
 
         if (!connected_.load() && running_.load()) {
-            std::cerr << "[USER_STREAM] Disconnected, reconnecting..." << std::endl;
+            LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Disconnected, reconnecting...");
             // Clean up old connection
             {
                 std::lock_guard<std::mutex> lock(ssl_mutex_);
@@ -490,9 +495,9 @@ void UserDataStream::keepalive_loop() {
 
         if (running_.load()) {
             if (keepalive_listen_key()) {
-                std::cout << "[USER_STREAM] Listen key keepalive sent" << std::endl;
+                LOG_INFO(get_logger(), "{}", "[USER_STREAM] Listen key keepalive sent");
             } else {
-                std::cerr << "[USER_STREAM] Listen key keepalive failed" << std::endl;
+                LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Listen key keepalive failed");
             }
         }
     }
@@ -505,7 +510,7 @@ void UserDataStream::process_message(const std::string& message) {
     std::string errors;
 
     if (!Json::parseFromStream(builder, stream, &root, &errors)) {
-        std::cerr << "[USER_STREAM] Failed to parse message" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Failed to parse message");
         return;
     }
 
@@ -527,7 +532,7 @@ void UserDataStream::process_message(const std::string& message) {
             qty = std::stod(root.get("l", "0").asString());     // Last filled quantity
             cum_qty = std::stod(root.get("z", "0").asString()); // Cumulative filled quantity
         } catch (const std::exception& e) {
-            std::cerr << "[USER_STREAM] Failed to parse fill data: " << e.what() << std::endl;
+            LOG_ERROR(get_logger(), "[USER_STREAM] Failed to parse fill data: {}", e.what());
             return;
         }
 
@@ -540,10 +545,8 @@ void UserDataStream::process_message(const std::string& message) {
         else if (status_str == "REJECTED") status = OrderStatus::REJECTED;
         else if (status_str == "EXPIRED") status = OrderStatus::EXPIRED;
 
-        std::cout << "[USER_STREAM] ExecutionReport: "
-                  << side_str << " " << status_str
-                  << " price=" << price << " qty=" << qty
-                  << " cum_qty=" << cum_qty << std::endl;
+        LOG_INFO(get_logger(), "[USER_STREAM] ExecutionReport: {} {} price={} qty={} cum_qty={}",
+                 side_str, status_str, price, qty, cum_qty);
 
         std::lock_guard<std::mutex> lock(callback_mutex_);
         if (fill_callback_) {

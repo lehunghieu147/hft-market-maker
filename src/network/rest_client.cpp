@@ -1,14 +1,21 @@
 #include "network/rest_client.h"
+#include "core/app_logger.h"
 #include <curl/curl.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 #include <json/json.h>
-#include <iostream>
 #include <sstream>
 #include <iomanip>
 #include <chrono>
 #include <mutex>
 #include <vector>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("network");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -117,11 +124,9 @@ std::string RestClient::get_account_info() {
         Json::Value root;
 
         if (reader.parse(response.value(), root)) {
-            std::cout << "\n====== ACCOUNT INFO ======" << std::endl;
-            std::cout << "Can Trade: " << root["canTrade"].asBool() << std::endl;
+            LOG_INFO(get_logger(), "ACCOUNT canTrade={}", root["canTrade"].asBool());
 
             if (root.isMember("balances")) {
-                std::cout << "\nRelevant Balances:" << std::endl;
                 for (const auto& balance : root["balances"]) {
                     std::string asset = balance["asset"].asString();
 
@@ -140,18 +145,13 @@ std::string RestClient::get_account_info() {
                         double free_amount = std::stod(free_str);
                         double locked_amount = std::stod(locked_str);
 
-                        // Show raw string and parsed value for debugging
                         if (free_amount > 0 || locked_amount > 0) {
-                            std::cout << "  " << asset << ": " << std::endl;
-                            std::cout << "    Raw free: '" << free_str << "'" << std::endl;
-                            std::cout << "    Parsed free: " << std::fixed << std::setprecision(8)
-                                     << free_amount << std::endl;
-                            std::cout << "    Locked: " << locked_amount << std::endl;
+                            LOG_INFO(get_logger(), "BALANCE asset={} free={} locked={}",
+                                     asset, free_str, locked_str);
                         }
                     }
                 }
             }
-            std::cout << "=========================\n" << std::endl;
         }
 
         return response.value();
@@ -201,7 +201,7 @@ std::optional<std::string> RestClient::send_public_request(
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        std::cerr << "CURL error: " << curl_easy_strerror(res) << std::endl;
+        LOG_ERROR(get_logger(), "CURL error: {}", curl_easy_strerror(res));
         return std::nullopt;
     }
 
@@ -274,7 +274,7 @@ std::optional<std::string> RestClient::send_signed_request(
     curl_slist_free_all(request_headers);
 
     if (res != CURLE_OK) {
-        std::cerr << "CURL error: " << curl_easy_strerror(res) << std::endl;
+        LOG_ERROR(get_logger(), "CURL error: {}", curl_easy_strerror(res));
         return std::nullopt;
     }
 
@@ -313,7 +313,7 @@ std::optional<Order> RestClient::place_limit_order(
 
     auto response = send_signed_request("POST", "/api/v3/order", params);
     if (!response) {
-        std::cerr << "No response received from order endpoint" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "No response received from order endpoint");
         return std::nullopt;
     }
 
@@ -323,46 +323,33 @@ std::optional<Order> RestClient::place_limit_order(
         Json::Reader tmpReader;
         Json::Value tmpRoot;
         if (tmpReader.parse(*response, tmpRoot)) {
-            std::string order_id = tmpRoot["orderId"].asString();
-            std::string side_str = tmpRoot["side"].asString();
-            std::string price_str = tmpRoot["price"].asString();
-            std::string qty_str = tmpRoot["origQty"].asString();
-
-            if (side_str == "BUY") {
-                std::cout << "[SUCCESS] BID Order Placed" << std::endl;
-                std::cout << "  Order ID: " << order_id << " | Price: $" << price_str
-                         << " | Qty: " << qty_str << std::endl;
-            } else {
-                std::cout << "[SUCCESS] ASK Order Placed" << std::endl;
-                std::cout << "  Order ID: " << order_id << " | Price: $" << price_str
-                         << " | Qty: " << qty_str << std::endl;
-            }
+            LOG_INFO(get_logger(), "ORDER_PLACED side={} id={} price={} qty={}",
+                     tmpRoot["side"].asString(), tmpRoot["orderId"].asString(),
+                     tmpRoot["price"].asString(), tmpRoot["origQty"].asString());
         }
     } else if (response->find("\"code\"") != std::string::npos) {
-        // Error response
         Json::Reader tmpReader;
         Json::Value tmpRoot;
         if (tmpReader.parse(*response, tmpRoot)) {
-            std::cout << "[ERROR] Order Failed: " << tmpRoot["msg"].asString() << std::endl;
+            LOG_ERROR(get_logger(), "ORDER_FAILED: {}", tmpRoot["msg"].asString());
         } else {
-            std::cout << "[ERROR] Order Failed: " << *response << std::endl;
+            LOG_ERROR(get_logger(), "ORDER_FAILED: {}", *response);
         }
     } else {
-        // Unknown response
-        std::cout << "Order response: " << *response << std::endl;
+        LOG_DEBUG(get_logger(), "Order response: {}", *response);
     }
 
     Json::Reader reader;
     Json::Value root;
     if (!reader.parse(*response, root)) {
-        std::cerr << "Failed to parse order response" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to parse order response");
         return std::nullopt;
     }
 
     // Check for error response
     if (root.isMember("code") && root.isMember("msg")) {
-        std::cerr << "Order error: " << root["msg"].asString()
-                  << " (code: " << root["code"].asInt() << ")" << std::endl;
+        LOG_ERROR(get_logger(), "Order error: {} (code: {})",
+                  root["msg"].asString(), root["code"].asInt());
         return std::nullopt;
     }
 
@@ -418,7 +405,7 @@ std::optional<bool> RestClient::cancel_order(const std::string& symbol, const st
     Json::Reader reader;
     Json::Value root;
     if (!reader.parse(*response, root)) {
-        std::cerr << "Failed to parse cancel response" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to parse cancel response");
         return false;
     }
 
@@ -533,7 +520,7 @@ std::optional<Order> RestClient::modify_order_parallel(
 
     // Check if cancel succeeded (optional - we might still want the new order even if cancel failed)
     if (!cancel_result || !cancel_result.value()) {
-        std::cerr << "Warning: Cancel order failed during modify_order_parallel" << std::endl;
+        LOG_WARNING(get_logger(), "{}", "Cancel order failed during modify_order_parallel");
         // Continue anyway - the new order might still be valid
     }
 
@@ -555,7 +542,7 @@ std::optional<OrderBook> RestClient::get_orderbook(const std::string& symbol, in
     Json::Reader reader;
     Json::Value root;
     if (!reader.parse(*response, root)) {
-        std::cerr << "Failed to parse orderbook response" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to parse orderbook response");
         return std::nullopt;
     }
 
@@ -639,19 +626,19 @@ std::optional<std::string> RestClient::get_exchange_info() {
 bool RestClient::get_symbol_info(const std::string& symbol, int& price_precision, int& quantity_precision) {
     auto response = send_public_request("/api/v3/exchangeInfo", {});
     if (!response) {
-        std::cerr << "Failed to get exchange info" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to get exchange info");
         return false;
     }
 
     Json::Reader reader;
     Json::Value root;
     if (!reader.parse(*response, root)) {
-        std::cerr << "Failed to parse exchange info response" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "Failed to parse exchange info response");
         return false;
     }
 
     if (!root.isMember("symbols")) {
-        std::cerr << "No symbols in exchange info" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "No symbols in exchange info");
         return false;
     }
 
@@ -696,13 +683,13 @@ bool RestClient::get_symbol_info(const std::string& symbol, int& price_precision
                 }
             }
 
-            std::cout << "Symbol " << symbol << " - Price precision: " << price_precision
-                      << ", Quantity precision: " << quantity_precision << std::endl;
+            LOG_INFO(get_logger(), "Symbol {} - Price precision: {} Quantity precision: {}",
+                     symbol, price_precision, quantity_precision);
             return true;
         }
     }
 
-    std::cerr << "Symbol " << symbol << " not found in exchange info" << std::endl;
+    LOG_ERROR(get_logger(), "Symbol {} not found in exchange info", symbol);
     return false;
 }
 

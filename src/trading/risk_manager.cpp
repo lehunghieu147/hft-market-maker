@@ -1,5 +1,12 @@
 #include "trading/risk_manager.h"
-#include <iostream>
+#include "core/app_logger.h"
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("risk");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -11,13 +18,13 @@ RiskManager::RiskManager(const RiskConfig& config)
 
 bool RiskManager::should_trade() const {
     if (kill_switch_.load()) {
-        std::cerr << "[RISK] Kill switch is active - trading halted" << std::endl;
+        LOG_ERROR(get_logger(), "{}", "[RISK] Kill switch is active - trading halted");
         return false;
     }
 
     if (consecutive_errors_.load() >= config_.max_consecutive_errors) {
-        std::cerr << "[RISK] Too many consecutive errors ("
-                  << consecutive_errors_.load() << ") - trading halted" << std::endl;
+        LOG_ERROR(get_logger(), "[RISK] Too many consecutive errors ({}) - trading halted",
+                  consecutive_errors_.load());
         return false;
     }
 
@@ -30,13 +37,13 @@ bool RiskManager::should_trade() const {
 
 void RiskManager::activate_kill_switch(const std::string& reason) {
     kill_switch_.store(true);
-    std::cerr << "[RISK] KILL SWITCH ACTIVATED: " << reason << std::endl;
+    LOG_CRITICAL(get_logger(), "[RISK] KILL SWITCH ACTIVATED: {}", reason);
 }
 
 void RiskManager::deactivate_kill_switch() {
     kill_switch_.store(false);
     consecutive_errors_.store(0);
-    std::cout << "[RISK] Kill switch deactivated" << std::endl;
+    LOG_INFO(get_logger(), "{}", "[RISK] Kill switch deactivated");
 }
 
 void RiskManager::on_error() {

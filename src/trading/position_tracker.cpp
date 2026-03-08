@@ -1,6 +1,13 @@
 #include "trading/position_tracker.h"
+#include "core/app_logger.h"
 #include <cmath>
-#include <iostream>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("risk");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -18,8 +25,7 @@ bool PositionTracker::can_place_order(OrderSide side, double quantity) const {
     }
 
     if (std::abs(projected) > max_position_size_) {
-        std::cerr << "[RISK] Position limit would be exceeded: "
-                  << std::abs(projected) << " > " << max_position_size_ << std::endl;
+        LOG_WARNING(get_logger(), "[RISK] Position limit would be exceeded: {} > {}", std::abs(projected), max_position_size_);
         return false;
     }
     return true;
@@ -33,7 +39,7 @@ bool PositionTracker::can_place_pair(double buy_qty, double sell_qty) const {
 
 void PositionTracker::on_fill(OrderSide side, double price, double quantity) {
     if (!std::isfinite(price) || !std::isfinite(quantity) || price <= 0 || quantity <= 0) {
-        std::cerr << "[POSITION] Invalid fill data - skipping" << std::endl;
+        LOG_WARNING(get_logger(), "{}", "[POSITION] Invalid fill data - skipping");
         return;
     }
 
@@ -47,9 +53,8 @@ void PositionTracker::on_fill(OrderSide side, double price, double quantity) {
         current_position_ -= quantity;
     }
 
-    std::cout << "[POSITION] " << (side == OrderSide::BUY ? "BUY" : "SELL")
-              << " fill: qty=" << quantity << " @ " << price
-              << " | Net position: " << current_position_ << std::endl;
+    LOG_INFO(get_logger(), "[POSITION] {} fill: qty={} @ {} | Net position: {}",
+             (side == OrderSide::BUY ? "BUY" : "SELL"), quantity, price, current_position_);
 }
 
 double PositionTracker::get_position() const {

@@ -27,7 +27,12 @@ C++17 HFT market maker bot for Binance with multi-exchange abstraction. Places s
 └──┴───────┴──┴───────┴──────────────┴────────────────────────┘
            │
 ┌──────────▼──────────────────────────────────────────────────┐
-│                    IExchange Interface                       │
+│                   AppLogger (Quill v7.5.0)                  │
+│  AsyncLogger: ConsoleSink + RotatingFileSink               │
+│  Named loggers: "trading", "network", "core", "risk"       │
+│  Lock-free ring buffer (~1-5µs per call)                    │
+├─────────────────────────────────────────────────────────────┤
+│  IExchange Interface                                         │
 │  connect/disconnect, place/cancel/modify orders             │
 │  subscribe_orderbook, get_balance, get_order_status         │
 ├─────────────────────────────────────────────────────────────┤
@@ -93,6 +98,36 @@ Pre-trade gate (ordered checks):
 - RFC 6455 compliant pong (echoes ping payload)
 - Thread-safe SSL cleanup (join before free)
 - API credentials loaded from config/env, never logged
+
+## Logging Subsystem (Quill v7.5.0)
+
+### Architecture
+- **AppLogger singleton**: Manages Quill backend lifecycle (init → get → shutdown)
+- **Async I/O**: Lock-free ring buffer ~1-5µs per log call (vs ~10-50µs for std::cout)
+- **Named loggers**: "trading", "network", "core", "risk", "root" with consistent sinks
+- **Dual sinks**: ConsoleSink (stdout) + RotatingFileSink (logs/market_maker.log)
+
+### Rotation Policy
+- **File**: 100MB max size + daily rotation at 00:00 UTC
+- **Mode**: Append mode, auto-creates logs/ directory
+- **Level**: Info by default (covers WARNING/ERROR/CRITICAL)
+
+### Usage Pattern
+```cpp
+// Get a named logger (creates if not exists)
+auto* logger = AppLogger::get("trading");
+LOG_INFO(logger, "Placed BID order {} @ {}", order_id, price);
+```
+
+### Thread Safety
+- Quill backend thread handles all I/O (non-blocking frontend)
+- Frontend calls use lock-free atomic operations
+- No blocking on log() call (completes in microseconds)
+
+### Graceful Shutdown
+```cpp
+AppLogger::shutdown(); // Flushes all pending logs, stops backend
+```
 
 ## Exchange Abstraction
 - `IExchange` abstract interface defines all exchange operations

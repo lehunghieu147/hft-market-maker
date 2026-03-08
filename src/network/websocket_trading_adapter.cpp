@@ -1,10 +1,17 @@
 #include "network/websocket_trading_adapter.h"
+#include "core/app_logger.h"
 #include <json/json.h>
-#include <iostream>
 #include <algorithm>
 #include <cctype>
 #include <thread>
 #include <chrono>
+
+namespace {
+    quill::Logger* get_logger() {
+        static quill::Logger* logger = MarketMaker::AppLogger::get("network");
+        return logger;
+    }
+}
 
 namespace MarketMaker {
 
@@ -36,7 +43,7 @@ WebSocketTradingAdapter::WebSocketTradingAdapter(
     ws_market_client_->enable_auto_reconnect(true);
     ws_trading_client_->enable_auto_reconnect(true);
 
-    std::cout << "WebSocket Trading Adapter initialized" << std::endl;
+    LOG_INFO(get_logger(), "{}", "WebSocket Trading Adapter initialized");
 }
 
 WebSocketTradingAdapter::~WebSocketTradingAdapter() {
@@ -56,14 +63,14 @@ bool WebSocketTradingAdapter::connect() {
     int max_retries = 100;
     int retry_delay_ms = 1000;
 
-    std::cout << "Connecting to WebSocket Trading API: " << trading_url << std::endl;
+    LOG_INFO(get_logger(), "Connecting to WebSocket Trading API: {}", trading_url);
 
     for (int attempt = 1; attempt <= max_retries && !trading_connected; ++attempt) {
         if (attempt > 1) {
-            std::cout << "Retry attempt " << attempt << "/" << max_retries << "..." << std::endl;
+            LOG_INFO(get_logger(), "Retry attempt {}/{}...", attempt, max_retries);
 
             // Cleanup old connection before retry
-            std::cout << "Cleaning up old connection..." << std::endl;
+            LOG_DEBUG(get_logger(), "{}", "Cleaning up old connection...");
             ws_trading_client_->disconnect();
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
@@ -80,16 +87,16 @@ bool WebSocketTradingAdapter::connect() {
         trading_connected = ws_trading_client_->connect(trading_url);
 
         if (!trading_connected && attempt < max_retries) {
-            std::cerr << "Connection attempt " << attempt << " failed, retrying..." << std::endl;
+            LOG_ERROR(get_logger(), "Connection attempt {} failed, retrying...", attempt);
         }
     }
 
     if (!trading_connected) {
-        std::cerr << "Failed to connect to WebSocket Trading API after " << max_retries << " attempts" << std::endl;
+        LOG_ERROR(get_logger(), "Failed to connect to WebSocket Trading API after {} attempts", max_retries);
         return false;
     }
 
-    std::cout << "Successfully connected to WebSocket Trading API" << std::endl;
+    LOG_INFO(get_logger(), "{}", "Successfully connected to WebSocket Trading API");
 
     // Set up connection handler to notify when both are connected
     if (connection_handler_) {
@@ -122,7 +129,7 @@ bool WebSocketTradingAdapter::subscribe_orderbook(const std::string& symbol, int
                                 std::to_string(depth) + "@100ms";
 
         if (!ws_market_client_->connect(market_url)) {
-            std::cerr << "Failed to connect to market data WebSocket" << std::endl;
+            LOG_ERROR(get_logger(), "{}", "Failed to connect to market data WebSocket");
             return false;
         }
     }
@@ -199,7 +206,7 @@ std::optional<Order> WebSocketTradingAdapter::place_limit_order(
         end_time - start_time
     ).count();
 
-    std::cout << "WebSocket order placement latency: " << latency_ms << " ms" << std::endl;
+    LOG_DEBUG(get_logger(), "WebSocket order placement latency: {}ms", latency_ms);
 
     // Create Order object
     Order order;
@@ -240,7 +247,7 @@ std::optional<bool> WebSocketTradingAdapter::cancel_order(
         end_time - start_time
     ).count();
 
-    std::cout << "WebSocket order cancellation latency: " << latency_ms << " ms" << std::endl;
+    LOG_DEBUG(get_logger(), "WebSocket order cancellation latency: {}ms", latency_ms);
 
     return result;
 }
@@ -516,10 +523,10 @@ void WebSocketTradingAdapter::handle_trading_response(const Json::Value& respons
     if (response.isMember("result")) {
         const Json::Value& result = response["result"];
         if (result.isMember("orderId")) {
-            std::cout << "Order response received - ID: " << result["orderId"].asString() << std::endl;
+            LOG_INFO(get_logger(), "Order response received - ID: {}", result["orderId"].asString());
         }
     } else if (response.isMember("error")) {
-        std::cerr << "Trading error: " << response["error"]["msg"].asString() << std::endl;
+        LOG_ERROR(get_logger(), "Trading error: {}", response["error"]["msg"].asString());
     }
 }
 
