@@ -28,8 +28,9 @@ services:
       # Mount logs directory (persistent across container restarts)
       - ./logs:/app/logs
 
-      # Mount config directory (for easy config updates without rebuild)
-      - ./config:/app/config:ro
+      # Config is built into image, use env vars to override settings
+      # Uncomment below to override config files (must create config.json first)
+      # - ./config:/app/config:ro
 
     # Resource limits (adjust based on VPS specs)
     deploy:
