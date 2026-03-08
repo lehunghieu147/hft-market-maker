@@ -46,7 +46,8 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
-RUN useradd -m -u 1000 trader && \
+# Use UID 10000 to avoid conflicts with existing system users
+RUN useradd -m -u 10000 trader && \
     mkdir -p /app/logs /app/config && \
     chown -R trader:trader /app
 
