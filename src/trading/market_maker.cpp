@@ -326,7 +326,7 @@ void MarketMakerBot::print_status() {
     LOG_INFO(quill_logger_,
              "[STATUS] exchange={} symbol={} mid={:.2f} "
              "bid={:.2f} ask={:.2f} "
-             "orders(total={} ok={} fail={}) "
+             "orders(total={} ok={} fail={} rate={:.1f}% opm={:.1f}) "
              "exec_lat(avg={:.3f} min={:.3f} max={:.3f}ms) "
              "react_lat(avg={:.3f} min={:.3f} max={:.3f}ms) "
              "reconnects={} uptime={:.2f}%",
@@ -334,6 +334,7 @@ void MarketMakerBot::print_status() {
              bid_order ? bid_order->price : 0.0,
              ask_order ? ask_order->price : 0.0,
              metrics.total_orders, metrics.successful_orders, metrics.failed_orders,
+             metrics.get_success_rate(), metrics.get_orders_per_minute(),
              metrics.avg_order_latency_ms, metrics.min_order_latency_ms, metrics.max_order_latency_ms,
              metrics.avg_reaction_latency_ms, metrics.min_reaction_latency_ms, metrics.max_reaction_latency_ms,
              metrics.reconnect_count, metrics.get_uptime_percentage());
@@ -341,11 +342,14 @@ void MarketMakerBot::print_status() {
     if (risk_manager_) {
         LOG_INFO(quill_logger_,
                  "[RISK] position={:.6f} daily_pnl={:.4f} total_pnl={:.4f} "
-                 "fees={:.4f} kill_switch={}",
+                 "fees={:.4f} trades(win={} loss={} total={}) kill_switch={}",
                  risk_manager_->position_tracker().get_position(),
                  risk_manager_->pnl_tracker().get_daily_pnl(),
                  risk_manager_->pnl_tracker().get_realized_pnl(),
                  risk_manager_->pnl_tracker().get_total_fees(),
+                 risk_manager_->pnl_tracker().get_winning_trades(),
+                 risk_manager_->pnl_tracker().get_losing_trades(),
+                 risk_manager_->pnl_tracker().get_total_trades(),
                  risk_manager_->is_kill_switch_active() ? "ACTIVE" : "off");
     }
 }

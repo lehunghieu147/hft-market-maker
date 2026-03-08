@@ -25,6 +25,9 @@ public:
     double get_daily_pnl() const;
     double get_total_fees() const;
     double get_max_drawdown_hit() const;
+    long get_winning_trades() const;
+    long get_losing_trades() const;
+    long get_total_trades() const;
 
     // Reset daily counters (call at start of each trading day)
     void reset_daily();
@@ -37,6 +40,8 @@ private:
     double total_fees_ = 0.0;
     double peak_pnl_ = 0.0;           // For drawdown calculation
     double max_drawdown_hit_ = 0.0;   // Worst drawdown observed
+    long winning_trades_ = 0;
+    long losing_trades_ = 0;
 
     // Limits
     double max_daily_loss_;

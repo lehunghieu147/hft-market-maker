@@ -150,6 +150,16 @@ struct LatencyMetrics {
         auto uptime_seconds = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
         return uptime_seconds > 0 ? 100.0 : 0.0;  // Simplified, should track actual downtime
     }
+
+    double get_success_rate() const {
+        return total_orders > 0 ? (static_cast<double>(successful_orders) / total_orders * 100.0) : 0.0;
+    }
+
+    double get_orders_per_minute() const {
+        auto now = std::chrono::steady_clock::now();
+        auto minutes = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count() / 60.0;
+        return minutes > 0 ? (total_orders / minutes) : 0.0;
+    }
 };
 
 } // namespace MarketMaker

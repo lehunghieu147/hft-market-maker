@@ -166,10 +166,11 @@ int main(int argc, char* argv[]) {
         // Print final metrics
         auto metrics = bot->get_metrics();
         LOG_INFO(logger,
-                 "[FINAL] orders(total={} ok={} fail={}) "
+                 "[FINAL] orders(total={} ok={} fail={} rate={:.1f}% opm={:.1f}) "
                  "latency(avg={:.3f} min={:.3f} max={:.3f}ms) "
                  "reconnects={} uptime={:.2f}%",
                  metrics.total_orders, metrics.successful_orders, metrics.failed_orders,
+                 metrics.get_success_rate(), metrics.get_orders_per_minute(),
                  metrics.avg_order_latency_ms, metrics.min_order_latency_ms,
                  metrics.max_order_latency_ms, metrics.reconnect_count,
                  metrics.get_uptime_percentage());

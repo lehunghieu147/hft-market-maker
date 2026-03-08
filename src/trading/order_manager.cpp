@@ -318,8 +318,9 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
         active_ask_order_ = std::make_shared<Order>(*order_result);
     }
 
-    LOG_INFO(logger_, "Placed {} order: ID={} Price={:.2f} Qty={:.2f}",
-             side_str, order_result->order_id, price, quantity);
+    LOG_INFO(logger_, "Placed {} order: ID={} Price={:.2f} Qty={:.2f} [ok={} fail={} total={}]",
+             side_str, order_result->order_id, price, quantity,
+             metrics_.successful_orders, metrics_.failed_orders, metrics_.total_orders);
 
     return true;
 }

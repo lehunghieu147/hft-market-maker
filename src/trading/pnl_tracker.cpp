@@ -43,8 +43,16 @@ void PnLTracker::on_trade(double entry_price, double exit_price, double quantity
     double current_drawdown = realized_pnl_ - peak_pnl_;
     max_drawdown_hit_ = std::min(max_drawdown_hit_, current_drawdown);
 
-    LOG_INFO(get_logger(), "[P&L] Trade: gross={:.4f} fee={:.4f} net={:.4f} | Daily: {:.4f} | Total: {:.4f}",
-             gross_pnl, fee, net_pnl, daily_pnl_, realized_pnl_);
+    // Track win/loss
+    if (net_pnl >= 0) {
+        winning_trades_++;
+    } else {
+        losing_trades_++;
+    }
+
+    LOG_INFO(get_logger(), "[P&L] Trade #{}: gross={:.4f} fee={:.4f} net={:.4f} | Daily: {:.4f} | Total: {:.4f} | W/L: {}/{}",
+             winning_trades_ + losing_trades_, gross_pnl, fee, net_pnl, daily_pnl_, realized_pnl_,
+             winning_trades_, losing_trades_);
 }
 
 bool PnLTracker::is_within_limits() const {
@@ -82,6 +90,21 @@ double PnLTracker::get_total_fees() const {
 double PnLTracker::get_max_drawdown_hit() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return max_drawdown_hit_;
+}
+
+long PnLTracker::get_winning_trades() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return winning_trades_;
+}
+
+long PnLTracker::get_losing_trades() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return losing_trades_;
+}
+
+long PnLTracker::get_total_trades() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return winning_trades_ + losing_trades_;
 }
 
 void PnLTracker::reset_daily() {
