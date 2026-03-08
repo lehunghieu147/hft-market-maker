@@ -57,6 +57,10 @@ WORKDIR /app
 # Copy compiled binary from builder
 COPY --from=builder --chown=trader:trader /app/out/bin/market_maker ./market_maker
 
+# Copy shared libraries from builder (jsoncpp, quill)
+COPY --from=builder /app/out/lib/*.so* /usr/local/lib/
+RUN ldconfig
+
 # Copy config files
 COPY --chown=trader:trader config/ ./config/
 
