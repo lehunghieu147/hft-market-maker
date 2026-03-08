@@ -1,16 +1,24 @@
 {
     "api": {
-        "key": "YOUR_BINANCE_API_KEY",
-        "secret": "YOUR_BINANCE_API_SECRET"
+        "key": "YOUR_API_KEY",
+        "secret": "YOUR_API_SECRET"
     },
     "trading": {
-        "symbol": "BTCUSDT",
-        "order_size": 20.0,
-        "spread_percentage": 0.02,
-        "base_asset": "BTC",
+        "symbol": "SOLUSDT",
+        "order_size": 0.07,
+        "spread_percentage": 0.010,
+        "base_asset": "SOL",
         "quote_asset": "USDT",
-        "display_assets": ["USDT", "BTC", "DOGE"],
-        "supported_quote_currencies": ["USDT", "BUSD", "DOGE", "ETH", "BNB"]
+        "display_assets": [
+            "USDT",
+            "SOL"
+        ],
+        "supported_quote_currencies": [
+            "USDT",
+            "BUSD",
+            "ETH",
+            "BNB"
+        ]
     },
     "exchange": {
         "name": "binance",
@@ -20,8 +28,16 @@
         "use_websocket_trading": true,
         "testnet": false
     },
+    "risk": {
+        "max_daily_loss": -100.0,
+        "max_position_size": 0.5,
+        "max_drawdown": -500.0,
+        "max_consecutive_errors": 5,
+        "maker_fee_rate": -0.0001,
+        "taker_fee_rate": 0.001
+    },
     "performance": {
-        "order_update_cooldown_ms": 500,
+        "order_update_cooldown_ms": 2000,
         "reconnect_delay_ms": 5000,
         "max_reconnect_attempts": 10,
         "max_orders_per_second": 2

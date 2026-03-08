@@ -2,90 +2,121 @@
 
 A high-performance, low-latency market maker bot for cryptocurrency trading on Binance exchange, implemented in C++17.
 
-## Table of Contents
-
-- [System Overview](#system-overview)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Performance Metrics](#performance-metrics)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Building](#building)
-- [Running](#running)
-- [Technical Details](#technical-details)
-- [Sample Output](#sample-output)
-- [Troubleshooting](#troubleshooting)
-
 ## System Overview
 
 This market maker bot implements a complete trading system with:
 
 - **Real-time market data** via WebSocket connections
-- **low-latency order execution** using Binance WebSocket Trading API
-- **Automatic order management** with continuous price updates
-- **WebSocket reconnection** with exponential backoff
-- **Multi-exchange support** architecture (currently Binance)
+- **Low-latency order execution** using Binance WebSocket Trading API
+- **Risk management** with position tracking, P&L monitoring, and kill switch
+- **Real-time fill tracking** via Binance User Data Stream
+- **Volatility-adjusted spreads** using Welford's online algorithm
+- **VWAP mid pricing** from orderbook depth analysis
+- **Order validation** with crossed-order and self-trade prevention
+- **Automatic reconnection** with exponential backoff
+- **Multi-exchange architecture** (currently Binance)
 
 ### Target Performance
 
-- **Reaction Latency**: < 50ms (orderbook update → order placement)
+- **Reaction Latency**: < 50ms (orderbook update -> order placement)
 
-## Key Features
+## Architecture
 
-### Trading Strategy
-- **Market making**: Places simultaneous BID and ASK orders around mid-price
-- **Configurable spread**: Adjustable spread percentage
-- **Dynamic order updates**: Continuously updates orders based on price movements
-- **Price change threshold**: Optimizes by skipping updates for small price changes
-
-### Reliability
-- **Automatic reconnection**: WebSocket reconnects with exponential backoff
-- **Connection monitoring**: Tracks connection status and reconnection attempts
-- **Error handling**: Comprehensive error handling and recovery
-- **Order validation**: Validates orders before placement
-
-### Monitoring
-- **Real-time metrics**: Tracks latency, order success rate, uptime
-- **Detailed logging**: Comprehensive logging with configurable verbosity
-- **Performance tracking**: Min/max/average latency measurements
-
+```
+                    +--------------------+
+                    |  MarketMakerBot    |
+                    +--------+-----------+
+                             |
+          +------------------+------------------+
+          |                  |                  |
++---------v------+  +--------v--------+  +-----v-----------+
+| OrderManager   |  | RiskManager     |  | UserDataStream  |
+| - place orders |  | - kill switch   |  | - real fills    |
+| - cancel/replace| | - error tracking|  | - balance events|
+| - fill events  |  +--------+--------+  +-----------------+
++----------------+           |
+                    +--------+--------+
+                    |                 |
+              +-----v-----+   +------v------+
+              | Position   |   | PnL         |
+              | Tracker    |   | Tracker     |
+              | - net pos  |   | - daily P&L |
+              | - limits   |   | - drawdown  |
+              +-----------+   | - fees      |
+                              +-------------+
+```
 
 ### Core Components
 
-1. **WebSocketTradingAdapter**: Main exchange adapter
-   - Manages dual WebSocket connections (market data + trading)
-   - Handles orderbook updates from market data stream
-   - Executes orders via WebSocket Trading API
-   - Automatic reconnection for both streams
+| Component | File | Purpose |
+|-----------|------|---------|
+| MarketMakerBot | `trading/market_maker` | Main bot orchestration, VWAP mid price, volatility feed |
+| OrderManager | `trading/order_manager` | Order lifecycle, fill events, timestamp validation |
+| OrderValidator | `trading/order_validator` | Pre-trade validation, crossed-order detection |
+| RiskManager | `trading/risk_manager` | Kill switch, error tracking, pre-trade risk gate |
+| PositionTracker | `trading/position_tracker` | Net position tracking with configurable limits |
+| PnLTracker | `trading/pnl_tracker` | Realized P&L, daily loss, drawdown, fee tracking |
+| VolatilityTracker | `trading/volatility_tracker` | Rolling stddev via Welford's algorithm |
+| UserDataStream | `network/user_data_stream` | Binance User Data Stream for real-time fills |
+| RateLimiter | `trading/rate_limiter` | Exchange rate limit compliance |
+| WebSocketClient | `network/websocket_client` | Market data WebSocket |
+| WebSocketTradingClient | `network/websocket_trading_client` | Order execution WebSocket |
+| RestClient | `network/rest_client` | REST API with connection pooling |
 
-2. **OrderManager**: Trading logic and order management
-   - Calculates BID/ASK prices based on mid-price
-   - Places and cancels orders asynchronously
-   - Tracks active orders and updates
-   - Performance optimization with price change threshold
+### Directory Structure
 
-3. **WebSocketClient**: Market data stream
-   - Real-time orderbook updates
-   - Maintains persistent connection
-   - Handles reconnection with exponential backoff
-   - Frame-level WebSocket protocol implementation
+```
+include/
+├── core/          # Config, types, logger
+├── exchange/      # Exchange interface, factory, Binance impl
+├── network/       # REST, WebSocket, User Data Stream clients
+└── trading/       # Order management, risk, position, P&L, volatility
+src/
+├── core/          # Config loader, logger implementation
+├── exchange/      # Exchange factory, Binance exchange
+├── network/       # Network client implementations
+└── trading/       # Trading logic implementations
+config/            # JSON configuration files
+```
 
-4. **WebSocketTradingClient**: Order execution stream
-   - Ultra low-latency order placement via WebSocket
-   - Bidirectional communication for order status
-   - HMAC-SHA256 authentication
-   - Async order placement and cancellation
+## Key Features
 
-## Performance Metrics
+### Risk Management
+- **Position limits**: Configurable max position size with atomic pair checks
+- **Daily loss limit**: Automatic trading halt when daily P&L breaches threshold
+- **Max drawdown**: Peak-to-trough drawdown monitoring
+- **Kill switch**: Emergency stop with manual reset
+- **Consecutive error tracking**: Auto-halt after N consecutive failures
+- **Fee-aware P&L**: Supports signed maker rebates (negative fees = rebate)
 
-The bot tracks and reports:
+### Trading Strategy
+- **Market making**: Simultaneous BID/ASK orders around VWAP mid-price
+- **Volatility-adjusted spreads**: Spread scales with market volatility
+- **Orderbook depth analysis**: VWAP mid price from top N levels
+- **Imbalance ratio**: Bid/ask volume imbalance detection
+- **Price change threshold**: Skip updates for insignificant price moves (< 0.01%)
+- **Stale data rejection**: Reject orderbook updates older than 5 seconds
 
-- **Reaction Latency**: Time from orderbook update to order placement
-- **Order Success Rate**: Percentage of successful orders
-- **Uptime**: Connection uptime percentage
-- **Reconnection Count**: Number of WebSocket reconnections
-- **Average/Min/Max Latency**: Statistical latency measurements
+### Real-Time Fill Tracking
+- **Binance User Data Stream**: WebSocket connection for `executionReport` events
+- **Accurate position tracking**: Based on real fills, not placement assumptions
+- **Partial fill handling**: Tracks cumulative fill quantities
+- **Balance monitoring**: Real-time `outboundAccountPosition` events
+- **Listen key management**: Auto-create, 30-min keepalive, cleanup on stop
+
+### Order Safety
+- **Order validation**: Price, quantity, spread sanity checks before placement
+- **Crossed-order prevention**: Detects bid >= ask before sending
+- **Cancel-and-replace**: Checks order status if cancel fails (handles already-filled)
+- **Parallel cancel/place**: Async order operations for minimal latency
+- **Timestamp validation**: Rejects stale orderbook data
+
+### Security
+- **SSL/TLS**: All connections encrypted with certificate verification
+- **HMAC-SHA256**: Request authentication for all signed endpoints
+- **Payload size limits**: WebSocket frame cap at 16MB (OOM prevention)
+- **No credential logging**: API keys never appear in logs
+- **Resource cleanup**: Proper SSL/thread cleanup on all failure paths
 
 ## Prerequisites
 
@@ -99,6 +130,11 @@ The bot tracks and reports:
 - **OpenSSL** (libssl-dev)
 - **CURL** (libcurl4-openssl-dev)
 
+Auto-fetched by CMake:
+- **JsonCpp** 1.9.5
+- **Asio** 1.28.0 (standalone)
+- **WebSocket++** 0.8.2
+
 ## Installation
 
 ### 1. Install Dependencies
@@ -106,22 +142,7 @@ The bot tracks and reports:
 **Ubuntu/Debian:**
 ```bash
 sudo apt-get update
-sudo apt-get install -y \
-    build-essential \
-    cmake \
-    libssl-dev \
-    libcurl4-openssl-dev \
-    git
-```
-
-**CentOS/RHEL:**
-```bash
-sudo yum install -y \
-    gcc-c++ \
-    cmake \
-    openssl-devel \
-    libcurl-devel \
-    git
+sudo apt-get install -y build-essential cmake libssl-dev libcurl4-openssl-dev git
 ```
 
 **macOS:**
@@ -129,22 +150,24 @@ sudo yum install -y \
 brew install cmake openssl curl
 ```
 
-### 2. Clone Repository
+### 2. Clone & Build
 
 ```bash
 git clone <repository-url>
-cd submission
+cd hft-market-maker
+
+# Configure and build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 ```
 
-### 3. JsonCpp Dependency
-
-JsonCpp will be automatically downloaded and built by CMake via FetchContent. No manual installation required.
+The executable will be at: `build/bin/market_maker`
 
 ## Configuration
 
 ### Configuration File
 
-The bot uses JSON configuration files located in `config/` directory. Example: `config/config_sei_5usd.json`
+The bot uses JSON configuration files in `config/` directory:
 
 ```json
 {
@@ -153,13 +176,13 @@ The bot uses JSON configuration files located in `config/` directory. Example: `
         "secret": "YOUR_API_SECRET"
     },
     "trading": {
-        "symbol": "SEIUSDT",
-        "order_size": 20.0,
+        "symbol": "BTCUSDT",
+        "order_size": 0.001,
         "spread_percentage": 0.02,
-        "base_asset": "SEI",
+        "base_asset": "BTC",
         "quote_asset": "USDT",
-        "display_assets": ["USDT", "SEI", "BTC"],
-        "supported_quote_currencies": ["USDT", "BUSD", "SEI", "ETH", "BNB"]
+        "display_assets": ["USDT", "BTC"],
+        "supported_quote_currencies": ["USDT", "BUSD", "ETH", "BNB"]
     },
     "exchange": {
         "name": "binance",
@@ -168,6 +191,14 @@ The bot uses JSON configuration files located in `config/` directory. Example: `
         "ws_trading_url": "wss://ws-api.binance.com:443",
         "use_websocket_trading": true,
         "testnet": false
+    },
+    "risk": {
+        "max_daily_loss": -100.0,
+        "max_position_size": 0.5,
+        "max_drawdown": -500.0,
+        "max_consecutive_errors": 5,
+        "maker_fee_rate": -0.0001,
+        "taker_fee_rate": 0.001
     },
     "performance": {
         "order_update_cooldown_ms": 500,
@@ -178,94 +209,20 @@ The bot uses JSON configuration files located in `config/` directory. Example: `
 }
 ```
 
-### Configuration Parameters
+### Risk Configuration
 
-#### API Settings
-- `api.key`: Your Binance API key
-- `api.secret`: Your Binance API secret
-
-#### Trading Settings
-- `symbol`: Trading pair (e.g., "SEIUSDT", "BTCUSDT")
-- `order_size`: Order quantity
-- `spread_percentage`: Spread from mid-price (0.02 = 2%)
-- `display_assets`: Assets to display in account info
-- `supported_quote_currencies`: Quote currencies for symbol conversion
-
-#### Exchange Settings
-- `name`: Exchange name ("binance")
-- `ws_url`: WebSocket URL for market data
-- `rest_url`: REST API URL (for account info and order execution when WebSocket trading disabled)
-- `ws_trading_url`: WebSocket Trading API URL for order execution
-- `use_websocket_trading`: Enable WebSocket Trading API (true/false)
-- `testnet`: Use testnet (true/false)
-
-#### Performance Settings
-- `order_update_cooldown_ms`: Minimum time between order updates
-- `reconnect_delay_ms`: Initial reconnection delay
-- `max_reconnect_attempts`: Maximum reconnection attempts
-- `max_orders_per_second`: Rate limit for orders
-
-## Building
-
-### Build Steps
-
-```bash
-# Create build directory
-mkdir -p build
-cd build
-
-# Configure with CMake
-cmake ..
-
-# Build (use -j for parallel compilation)
-make -j4
-```
-
-### Build Output
-
-The executable will be created at: `build/bin/market_maker`
-
-### Build Options
-
-**Debug Build:**
-```bash
-cmake -DCMAKE_BUILD_TYPE=Debug ..
-make -j4
-```
-
-**Release Build (optimized):**
-```bash
-cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j4
-```
-
-## Running
-
-### Basic Usage
-
-```bash
-# Run with specific config file from build directory
-./bin/market_maker ../config/config_sei.json
-./bin/market_maker ../config/config_doge.json
-
-# Run from project root
-./build/bin/market_maker config/config_sei.json
-./build/bin/market_maker config/config_doge.json
-```
-
-### Command Line Options
-
-```bash
-# Show help
-./bin/market_maker --help
-
-# Use specific config
-./bin/market_maker <config_file>
-```
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_daily_loss` | -100.0 | Daily loss threshold (negative USDT). Trading halts when breached |
+| `max_position_size` | 0.5 | Maximum absolute net position (base currency) |
+| `max_drawdown` | -500.0 | Peak-to-trough drawdown limit (negative USDT) |
+| `max_consecutive_errors` | 5 | Kill switch triggers after N consecutive order failures |
+| `maker_fee_rate` | -0.0001 | Maker fee rate (negative = rebate). Binance VIP0: -0.01% |
+| `taker_fee_rate` | 0.001 | Taker fee rate. Binance VIP0: 0.1% |
 
 ### Environment Variables
 
-You can override config settings with environment variables:
+Override config values with environment variables:
 
 ```bash
 export BINANCE_API_KEY="your_api_key"
@@ -273,140 +230,54 @@ export BINANCE_API_SECRET="your_api_secret"
 export SYMBOL="BTCUSDT"
 export ORDER_SIZE="0.001"
 export SPREAD_PERCENTAGE="0.02"
-
-./bin/market_maker ../config/config_doge.json
 ```
 
-### Running in Background
+## Running
 
 ```bash
-# Run in background with nohup
-nohup ./bin/market_maker ../config/config_sei.json > output.log 2>&1 &
+# Run with config file
+./build/bin/market_maker config/config.json
 
-# Run with screen
-screen -S market_maker
-./bin/market_maker ../config/config_sei.json
+# Run in background
+nohup ./build/bin/market_maker config/config.json > output.log 2>&1 &
 
-# Detach: Ctrl+A, D
-# Reattach: screen -r market_maker
+# Stop: Ctrl+C (graceful shutdown)
 ```
 
-### Stopping the Bot
+## Performance Metrics
 
-- **Ctrl+C**: Graceful shutdown
-- **SIGTERM**: `kill <pid>` (graceful)
-- **SIGKILL**: `kill -9 <pid>` (force)
+The bot tracks and reports every 30 seconds:
 
-
-## Technical Details
-
-### WebSocket Implementation
-
-#### Market Data Stream
-- **Protocol**: RFC 6455 WebSocket over TLS
-- **Endpoint**: wss://stream.binance.com:9443/ws
-- **Frame handling**: Full frame parsing and masking
-- **Ping/Pong**: Automatic heartbeat handling
-- **Reconnection**: Exponential backoff (5s, 10s, 20s, ...)
-
-#### WebSocket Trading API
-- **Protocol**: Binance WebSocket API v3
-- **Endpoint**: wss://ws-api.binance.com:443/ws-api/v3
-- **Authentication**: HMAC-SHA256 signature per request
-- **Bidirectional**: Request-response model over WebSocket
-- **Ultra low latency**: ~10-20ms faster than REST API
-- **Features**:
-  - Async order placement
-  - Real-time order status updates
-  - Order cancellation
-  - Account queries
-
-### Threading Model
-
-- **Main thread**: Trading logic and order management
-- **WebSocket thread**: Market data reception
-- **Async operations**: Non-blocking order placement
-
-### Security
-
-- **API credentials**: Loaded from config file
-- **HMAC signing**: SHA256 for request authentication
-- **TLS/SSL**: All connections encrypted
-- **No credential logging**: API keys never logged
-
-### Performance Optimizations
-
-1. **WebSocket Trading API**: Uses WebSocket instead of REST for ultra low latency
-2. **Dual WebSocket streams**: Separate connections for market data and trading
-3. **Price change threshold**: Skip updates for small price changes (< 0.01%)
-4. **Async order operations**: Place and cancel orders in parallel
-5. **Pre-calculation**: Calculate prices before network I/O
-6. **Lock-free operations**: Atomic operations where possible
-7. **Persistent connections**: No TCP handshake overhead per order
-
-## Sample Output
-
-```
-=====================================================
-  PRICE CALCULATION
-=====================================================
-  Mid Price:       $0.28545 (from OrderBook)
-  Spread Config:    2.0%
------------------------------------------------------
-  BUY Order (BID):
-    Formula: MidPrice × (1 - Spread)
-    Calc: 0.28545 × 0.9800 = 0.2797410 -> $0.28000
------------------------------------------------------
-  SELL Order (ASK):
-    Formula: MidPrice × (1 + Spread)
-    Calc: 0.28545 × 1.0200 = 0.2911590 -> $0.29000
------------------------------------------------------
-  Calc Time: 1 us
-=====================================================
-
-=========== PLACING NEW ORDERS ===========
-  Mid Price: $0.28595
-  BID (Buy):  $0.28000 [Qty: 20.00000]
-  ASK (Sell): $0.29000 [Qty: 20.00000]
-==========================================
-
-[SUCCESS] BID Order Placed
-  Order ID: 2236530873 | Price: $0.28000000 | Qty: 20.00000000
-
-[SUCCESS] ASK Order Placed
-  Order ID: 2236530916 | Price: $0.29000000 | Qty: 20.00000000
-
-=============================================
-  BOTH ORDERS PLACED SUCCESSFULLY
-=============================================
-
-================================================
-  LATENCY METRICS
-================================================
-  Reaction Latency: 15.123 ms (45123 us)
-  Status: TARGET MET (< 50ms requirement)
-================================================
-```
+- **Reaction Latency**: Time from orderbook update to order placement (target: < 50ms)
+- **Execution Latency**: Time to execute the order placement function
+- **Order Success Rate**: Successful / total orders
+- **Position**: Current net position in base currency
+- **Daily P&L**: Realized profit/loss for the day
+- **Total P&L**: Cumulative realized P&L
+- **Fees Paid**: Total trading fees (net of maker rebates)
+- **Kill Switch**: Active/off status
+- **Uptime**: Connection uptime percentage
 
 ## Troubleshooting
 
 ### WebSocket Trading API Connection Issues
 
-When using `use_websocket_trading: true`, you may occasionally see connection timeout errors:
-
+When using `use_websocket_trading: true`, connection timeouts are normal:
 ```
 [error] handle_connect error: Timer Expired
-WebSocket Trading connection failed
 ```
+The bot auto-retries with exponential backoff (1s, 2s, 3s, ...).
 
-**This is normal** - the bot has built-in retry mechanism that will automatically:
-- Retry connection up to 100 times
-- Clean up and recreate WebSocket client between retries
-- Use exponential backoff delay (1s, 2s, 3s, ...)
+### Kill Switch Activated
 
-The bot will continue retrying until successfully connected and operate normally afterward.
+If trading halts with `KILL SWITCH ACTIVATED`:
+1. Check logs for the reason (consecutive errors, daily loss, drawdown)
+2. Fix the underlying issue
+3. Restart the bot (kill switch resets on restart)
 
-### Process Management
+### Stale Data Warnings
 
-If you need to stop the bot, use **Ctrl+C** for graceful shutdown. The bot will automatically exit after 1 second of cleanup.
-
+```
+[ORDER] Rejecting stale orderbook data (Xms old)
+```
+Indicates network latency > 5 seconds. Check internet connection stability.
