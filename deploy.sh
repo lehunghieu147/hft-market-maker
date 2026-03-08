@@ -107,6 +107,24 @@ fi
 
 # Create logs directory if not exists
 mkdir -p logs
+
+# Fix permissions for Docker user (UID 10000)
+if [ "$(stat -c %u logs 2>/dev/null)" != "10000" ]; then
+    echo "📁 Fixing logs directory permissions for Docker user..."
+    if [ "$EUID" -eq 0 ]; then
+        # Running as root
+        chown -R 10000:10000 logs/
+    else
+        # Not root, try sudo
+        if command -v sudo &> /dev/null; then
+            sudo chown -R 10000:10000 logs/
+        else
+            echo "⚠️  Warning: Cannot fix permissions (not root and sudo not available)"
+            echo "   Run manually: sudo chown -R 10000:10000 logs/"
+        fi
+    fi
+fi
+
 echo "✅ Logs directory ready"
 echo ""
 
