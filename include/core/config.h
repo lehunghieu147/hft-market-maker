@@ -16,6 +16,17 @@ struct ExchangeEndpoints {
     std::string testnet_rest_url;
 };
 
+struct MomentumConfig {
+    double epsilon = 0.0002;          // Signal threshold
+    int ema_window = 400;             // EMA period
+    int cooldown_ms = 500;            // Min ms between signals
+    double max_position = 10.0;       // Max position size
+    double order_size = 0.001;        // Order quantity (independent from MM)
+    std::string order_type = "ioc";   // "ioc" or "market"
+    bool tick_recording = false;      // Enable tick recording
+    std::string tick_log_path = "logs/ticks.bin";
+};
+
 struct Config {
     // Exchange selection
     std::string exchange_type = "binance";  // "binance", "coinbase", "kraken", etc.
@@ -73,6 +84,9 @@ struct Config {
 
     // Exchange-specific parameters (optional)
     std::map<std::string, std::string> extra_params;
+
+    // Momentum strategy config
+    MomentumConfig momentum;
 
     // Static exchange endpoints database
     static std::map<std::string, ExchangeEndpoints> EXCHANGE_ENDPOINTS;

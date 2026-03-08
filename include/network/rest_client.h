@@ -31,6 +31,23 @@ public:
         const std::string& client_order_id = ""
     );
 
+    // Market order (no price needed)
+    std::optional<Order> place_market_order(
+        const std::string& symbol,
+        OrderSide side,
+        double quantity,
+        const std::string& client_order_id = ""
+    );
+
+    // IOC limit order (crosses spread, unfilled portion cancelled)
+    std::optional<Order> place_ioc_limit_order(
+        const std::string& symbol,
+        OrderSide side,
+        double price,
+        double quantity,
+        const std::string& client_order_id = ""
+    );
+
     std::optional<bool> cancel_order(
         const std::string& symbol,
         const std::string& order_id

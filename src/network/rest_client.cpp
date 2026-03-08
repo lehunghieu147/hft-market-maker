@@ -391,6 +391,152 @@ std::optional<Order> RestClient::place_limit_order(
     return order;
 }
 
+std::optional<Order> RestClient::place_market_order(
+    const std::string& symbol,
+    OrderSide side,
+    double quantity,
+    const std::string& client_order_id) {
+
+    char quantity_buffer[32];
+    snprintf(quantity_buffer, sizeof(quantity_buffer), "%.5f", quantity);
+    std::string quantity_formatted(quantity_buffer);
+
+    std::vector<std::pair<std::string, std::string>> params = {
+        {"symbol", symbol},
+        {"side", side == OrderSide::BUY ? "BUY" : "SELL"},
+        {"type", "MARKET"},
+        {"quantity", quantity_formatted}
+    };
+
+    if (!client_order_id.empty()) {
+        params.push_back({"newClientOrderId", client_order_id});
+    }
+
+    auto response = send_signed_request("POST", "/api/v3/order", params);
+    if (!response) {
+        LOG_ERROR(get_logger(), "{}", "No response from market order endpoint");
+        return std::nullopt;
+    }
+
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(*response, root)) {
+        LOG_ERROR(get_logger(), "{}", "Failed to parse market order response");
+        return std::nullopt;
+    }
+
+    if (root.isMember("code") && root.isMember("msg")) {
+        LOG_ERROR(get_logger(), "Market order error: {} (code: {})",
+                  root["msg"].asString(), root["code"].asInt());
+        return std::nullopt;
+    }
+
+    Order order;
+    if (root["orderId"].isNumeric()) {
+        order.order_id = std::to_string(root["orderId"].asInt64());
+    } else {
+        order.order_id = root["orderId"].asString();
+    }
+    order.client_order_id = root["clientOrderId"].asString();
+    order.symbol = root["symbol"].asString();
+    order.side = root["side"].asString() == "BUY" ? OrderSide::BUY : OrderSide::SELL;
+    order.price = 0.0;  // Market orders have no price
+    if (root["origQty"].isString()) {
+        order.quantity = std::stod(root["origQty"].asString());
+    } else {
+        order.quantity = root["origQty"].asDouble();
+    }
+    if (root["executedQty"].isString()) {
+        order.executed_quantity = std::stod(root["executedQty"].asString());
+    } else {
+        order.executed_quantity = root["executedQty"].asDouble();
+    }
+    order.status = OrderStatus::NEW;
+    order.created_time = std::chrono::steady_clock::now();
+
+    LOG_INFO(get_logger(), "MARKET_ORDER side={} qty={}",
+             root["side"].asString(), quantity_formatted);
+    return order;
+}
+
+std::optional<Order> RestClient::place_ioc_limit_order(
+    const std::string& symbol,
+    OrderSide side,
+    double price,
+    double quantity,
+    const std::string& client_order_id) {
+
+    char price_buffer[32];
+    char quantity_buffer[32];
+    snprintf(price_buffer, sizeof(price_buffer), "%.2f", price);
+    snprintf(quantity_buffer, sizeof(quantity_buffer), "%.5f", quantity);
+    std::string price_formatted(price_buffer);
+    std::string quantity_formatted(quantity_buffer);
+
+    std::vector<std::pair<std::string, std::string>> params = {
+        {"symbol", symbol},
+        {"side", side == OrderSide::BUY ? "BUY" : "SELL"},
+        {"type", "LIMIT"},
+        {"timeInForce", "IOC"},
+        {"quantity", quantity_formatted},
+        {"price", price_formatted}
+    };
+
+    if (!client_order_id.empty()) {
+        params.push_back({"newClientOrderId", client_order_id});
+    }
+
+    auto response = send_signed_request("POST", "/api/v3/order", params);
+    if (!response) {
+        LOG_ERROR(get_logger(), "{}", "No response from IOC order endpoint");
+        return std::nullopt;
+    }
+
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(*response, root)) {
+        LOG_ERROR(get_logger(), "{}", "Failed to parse IOC order response");
+        return std::nullopt;
+    }
+
+    if (root.isMember("code") && root.isMember("msg")) {
+        LOG_ERROR(get_logger(), "IOC order error: {} (code: {})",
+                  root["msg"].asString(), root["code"].asInt());
+        return std::nullopt;
+    }
+
+    Order order;
+    if (root["orderId"].isNumeric()) {
+        order.order_id = std::to_string(root["orderId"].asInt64());
+    } else {
+        order.order_id = root["orderId"].asString();
+    }
+    order.client_order_id = root["clientOrderId"].asString();
+    order.symbol = root["symbol"].asString();
+    order.side = root["side"].asString() == "BUY" ? OrderSide::BUY : OrderSide::SELL;
+    if (root["price"].isString()) {
+        order.price = std::stod(root["price"].asString());
+    } else {
+        order.price = root["price"].asDouble();
+    }
+    if (root["origQty"].isString()) {
+        order.quantity = std::stod(root["origQty"].asString());
+    } else {
+        order.quantity = root["origQty"].asDouble();
+    }
+    if (root["executedQty"].isString()) {
+        order.executed_quantity = std::stod(root["executedQty"].asString());
+    } else {
+        order.executed_quantity = root["executedQty"].asDouble();
+    }
+    order.status = OrderStatus::NEW;
+    order.created_time = std::chrono::steady_clock::now();
+
+    LOG_INFO(get_logger(), "IOC_ORDER side={} price={} qty={}",
+             root["side"].asString(), price_formatted, quantity_formatted);
+    return order;
+}
+
 std::optional<bool> RestClient::cancel_order(const std::string& symbol, const std::string& order_id) {
     std::vector<std::pair<std::string, std::string>> params = {
         {"symbol", symbol},

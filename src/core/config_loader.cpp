@@ -118,6 +118,27 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
             config.max_orders_per_second = root["performance"]["max_orders_per_second"].asInt();
         }
 
+        // Momentum strategy settings
+        if (root.isMember("momentum")) {
+            auto& m = root["momentum"];
+            if (m.isMember("epsilon"))
+                config.momentum.epsilon = m["epsilon"].asDouble();
+            if (m.isMember("ema_window"))
+                config.momentum.ema_window = m["ema_window"].asInt();
+            if (m.isMember("cooldown_ms"))
+                config.momentum.cooldown_ms = m["cooldown_ms"].asInt();
+            if (m.isMember("max_position"))
+                config.momentum.max_position = m["max_position"].asDouble();
+            if (m.isMember("order_size"))
+                config.momentum.order_size = m["order_size"].asDouble();
+            if (m.isMember("order_type"))
+                config.momentum.order_type = m["order_type"].asString();
+            if (m.isMember("tick_recording"))
+                config.momentum.tick_recording = m["tick_recording"].asBool();
+            if (m.isMember("tick_log_path"))
+                config.momentum.tick_log_path = m["tick_log_path"].asString();
+        }
+
         // Logging settings
         if (root.isMember("logging")) {
             config.enable_verbose_logging = root["logging"]["verbose"].asBool();

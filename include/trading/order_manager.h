@@ -26,6 +26,11 @@ public:
     // Order management
     bool place_market_maker_orders(double mid_price);
     bool place_market_maker_orders(double mid_price, const std::chrono::steady_clock::time_point& orderbook_time);
+    // Single taker order (IOC limit or market)
+    bool place_taker_order(OrderSide side, double price, double quantity,
+                           const std::string& order_type = "ioc",
+                           const std::chrono::steady_clock::time_point& orderbook_time = {});
+
     bool cancel_all_active_orders();
     bool update_orders_if_needed(double new_mid_price);
     bool update_orders_if_needed(double new_mid_price, const std::chrono::steady_clock::time_point& orderbook_time);

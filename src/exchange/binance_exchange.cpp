@@ -272,14 +272,37 @@ std::optional<Order> BinanceExchange::place_limit_order(
 }
 
 std::optional<Order> BinanceExchange::place_market_order(
-    [[maybe_unused]] const std::string& symbol,
-    [[maybe_unused]] OrderSide side,
-    [[maybe_unused]] double quantity,
-    [[maybe_unused]] const std::string& client_order_id
+    const std::string& symbol,
+    OrderSide side,
+    double quantity,
+    const std::string& client_order_id
 ) {
-    // Binance market orders can be implemented through REST API
-    // For now, return nullopt as it's not in current RestClient
-    return std::nullopt;
+    if (!rest_client_) return std::nullopt;
+
+    enforce_rate_limit();
+    std::string binance_symbol = convert_symbol_to_binance(symbol);
+    double formatted_qty = format_quantity(quantity, binance_symbol);
+
+    return rest_client_->place_market_order(
+        binance_symbol, side, formatted_qty, client_order_id);
+}
+
+std::optional<Order> BinanceExchange::place_ioc_order(
+    const std::string& symbol,
+    OrderSide side,
+    double price,
+    double quantity,
+    const std::string& client_order_id
+) {
+    if (!rest_client_) return std::nullopt;
+
+    enforce_rate_limit();
+    std::string binance_symbol = convert_symbol_to_binance(symbol);
+    double formatted_price = format_price(price, binance_symbol);
+    double formatted_qty = format_quantity(quantity, binance_symbol);
+
+    return rest_client_->place_ioc_limit_order(
+        binance_symbol, side, formatted_price, formatted_qty, client_order_id);
 }
 
 std::optional<bool> BinanceExchange::cancel_order(

@@ -201,6 +201,48 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
     return bid_success && ask_success;
 }
 
+bool OrderManager::place_taker_order(OrderSide side, double price, double quantity,
+                                     const std::string& order_type,
+                                     const std::chrono::steady_clock::time_point& /*orderbook_time*/) {
+    // Risk management gate
+    if (risk_manager_ && !risk_manager_->should_trade()) {
+        LOG_ERROR(logger_, "{}", "Taker order blocked by risk manager");
+        return false;
+    }
+
+    std::string client_order_id = generate_client_order_id(side);
+    const char* side_str = (side == OrderSide::BUY) ? "BUY" : "SELL";
+
+    std::optional<Order> result;
+    if (order_type == "market") {
+        result = exchange_->place_market_order(config_.symbol, side, quantity, client_order_id);
+    } else {
+        // Default: IOC limit order
+        result = exchange_->place_ioc_order(config_.symbol, side, price, quantity, client_order_id);
+    }
+
+    if (!result) {
+        LOG_ERROR(logger_, "Failed to place taker {} order at {}", side_str, price);
+        if (risk_manager_) risk_manager_->on_error();
+        std::lock_guard<std::mutex> lock(metrics_mutex_);
+        metrics_.failed_orders++;
+        metrics_.total_orders++;
+        return false;
+    }
+
+    if (risk_manager_) risk_manager_->on_success();
+
+    {
+        std::lock_guard<std::mutex> lock(metrics_mutex_);
+        metrics_.successful_orders++;
+        metrics_.total_orders++;
+    }
+
+    LOG_INFO(logger_, "TAKER_{} {} price={:.2f} qty={:.6f} type={} id={}",
+             side_str, result->symbol, price, quantity, order_type, result->order_id);
+    return true;
+}
+
 bool OrderManager::cancel_all_active_orders() {
     // Copy orders outside lock to avoid holding mutex during network I/O
     std::shared_ptr<Order> bid_copy;

@@ -1,4 +1,4 @@
-#include "trading/market_maker.h"
+#include "trading/momentum_taker.h"
 #include "core/config_loader.h"
 #include "core/app_logger.h"
 #include <iostream>
@@ -11,98 +11,64 @@
 using namespace MarketMaker;
 
 std::atomic<bool> should_exit(false);
-std::unique_ptr<MarketMakerBot> bot;
+std::unique_ptr<MomentumTakerBot> bot;
 
 void signal_handler(int /* signal */) {
     should_exit = true;
 }
 
 void print_usage() {
-    std::cout << "Market Maker Bot for Cryptocurrency Trading\n"
-              << "===========================================\n"
-              << "Usage: ./market_maker [config_file]\n\n"
+    std::cout << "Momentum Taker Bot for Cryptocurrency Trading\n"
+              << "==============================================\n"
+              << "Usage: ./momentum_taker [config_file]\n\n"
               << "Arguments:\n"
-              << "  config_file         - Path to JSON config file (default: config.json)\n\n"
+              << "  config_file  - Path to JSON config file (default: config.momentum.json)\n\n"
               << "Examples:\n"
-              << "  ./market_maker                  # Use default config.json\n"
-              << "  ./market_maker config.json      # Use specific config file\n"
-              << "  ./market_maker config.testnet.json  # Use testnet config\n\n"
-              << "Config file can be overridden with environment variables:\n"
-              << "  BINANCE_API_KEY     - Override API key from config\n"
-              << "  BINANCE_API_SECRET  - Override API secret from config\n"
+              << "  ./momentum_taker                           # Use default config\n"
+              << "  ./momentum_taker config.momentum.json      # Use specific config\n\n"
+              << "Momentum-specific config keys (in \"momentum\" section):\n"
+              << "  epsilon       - Signal threshold (default: 0.0002)\n"
+              << "  ema_window    - EMA period (default: 400)\n"
+              << "  cooldown_ms   - Min ms between signals (default: 500)\n"
+              << "  max_position  - Max position size (default: 10.0)\n"
+              << "  order_size    - Order quantity (default: 0.001)\n"
+              << "  order_type    - \"ioc\" or \"market\" (default: ioc)\n\n"
+              << "Environment variable overrides:\n"
+              << "  BINANCE_API_KEY     - Override API key\n"
+              << "  BINANCE_API_SECRET  - Override API secret\n"
               << "  SYMBOL              - Override trading pair\n"
-              << "  ORDER_SIZE          - Override order size\n"
-              << "  SPREAD_PERCENTAGE   - Override spread percentage\n"
               << std::endl;
 }
 
-Config load_config_from_env() {
-    Config config;
-
-    // Load optional parameters from environment
-    const char* symbol = std::getenv("SYMBOL");
-    if (symbol) {
-        config.symbol = symbol;
-    }
-
-    const char* order_size = std::getenv("ORDER_SIZE");
-    if (order_size) {
-        config.order_size = std::stod(order_size);
-    }
-
-    const char* spread = std::getenv("SPREAD_PERCENTAGE");
-    if (spread) {
-        config.spread_percentage = std::stod(spread);
-    }
-
-    const char* log_file = std::getenv("LOG_FILE");
-    if (log_file) {
-        config.log_file = log_file;
-    }
-
-    const char* verbose = std::getenv("VERBOSE");
-    if (verbose && std::string(verbose) == "false") {
-        config.enable_verbose_logging = false;
-    }
-
-    return config;
-}
-
 int main(int argc, char* argv[]) {
-    // Set up signal handlers
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // Check for help flag
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage();
         return 0;
     }
 
-    // Initialize logger early
     AppLogger::init();
     auto* logger = AppLogger::get("core");
 
     std::cout << "===========================================\n"
-              << "    Market Maker Bot - High Frequency Trading\n"
+              << "    Momentum Taker Bot - HFT Strategy\n"
               << "===========================================\n" << std::endl;
 
-    // Determine config file path
-    std::string config_file = "config.json";
+    std::string config_file = "config.momentum.json";
     if (argc > 1) {
         config_file = argv[1];
     }
 
-    // Check if config file exists
     if (!std::filesystem::exists(config_file)) {
         LOG_ERROR(logger, "Config file not found: {}", config_file);
 
-        // Create a default config file if it doesn't exist
-        if (config_file == "config.json") {
-            LOG_INFO(logger, "{}", "Creating default config file: config.json");
+        if (config_file == "config.momentum.json") {
+            LOG_INFO(logger, "{}", "Creating default config: config.momentum.json");
             Config default_config;
-            ConfigLoader::save_to_file(default_config, "config.json");
-            LOG_INFO(logger, "{}", "Please edit config.json and add your API credentials, then run again.");
+            ConfigLoader::save_to_file(default_config, "config.momentum.json");
+            LOG_INFO(logger, "{}", "Please edit config.momentum.json and add your API credentials.");
         } else {
             LOG_INFO(logger, "{}", "Please create the config file or specify a valid path.");
         }
@@ -112,7 +78,6 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        // Load configuration from file
         LOG_INFO(logger, "Loading configuration from: {}", config_file);
         auto config_opt = ConfigLoader::load_from_file(config_file);
 
@@ -124,11 +89,11 @@ int main(int argc, char* argv[]) {
 
         Config config = *config_opt;
 
-        LOG_INFO(logger, "Configuration: symbol={} order_size={} spread={:.2f}%",
-                 config.symbol, config.order_size, config.spread_percentage * 100);
+        LOG_INFO(logger, "Config: symbol={} epsilon={} ema_window={} order_size={} order_type={}",
+                 config.symbol, config.momentum.epsilon, config.momentum.ema_window,
+                 config.momentum.order_size, config.momentum.order_type);
 
-        // Create and initialize bot
-        bot = std::make_unique<MarketMakerBot>(config);
+        bot = std::make_unique<MomentumTakerBot>(config);
 
         LOG_INFO(logger, "{}", "Initializing bot...");
         if (!bot->initialize()) {
@@ -137,25 +102,19 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Run bot
-        LOG_INFO(logger, "{}", "Starting market maker bot... Press Ctrl+C to stop");
-
+        LOG_INFO(logger, "{}", "Starting momentum taker bot... Press Ctrl+C to stop");
         bot->run();
 
-        // Main loop - wait for exit signal
         while (!should_exit && bot->is_running()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
-        // Ensure bot is stopped
         if (should_exit && bot) {
             LOG_INFO(logger, "{}", "Shutting down bot gracefully...");
             bot->stop();
-            // Give time for cleanup
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
 
-        // Print final metrics
         auto metrics = bot->get_metrics();
         LOG_INFO(logger,
                  "[FINAL] orders(total={} ok={} fail={} rate={:.1f}% opm={:.1f}) "

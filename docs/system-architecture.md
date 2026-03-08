@@ -2,10 +2,13 @@
 
 ## Overview
 
-C++17 HFT market maker bot for Binance with multi-exchange abstraction. Places simultaneous BID/ASK limit orders around a VWAP mid-price, adjusts spreads by volatility, and tracks positions from real fills.
+C++17 HFT trading system for Binance with multi-exchange abstraction. Contains two trading strategies:
+1. **Market Maker Bot**: Places simultaneous BID/ASK limit orders around VWAP mid-price, adjusts spreads by volatility
+2. **Momentum Taker Bot**: EMA(400)-based momentum detection, executes IOC limit orders on threshold crossings
 
 ## Component Diagram
 
+### Market Maker Bot
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      MarketMakerBot                         │
@@ -25,8 +28,30 @@ C++17 HFT market maker bot for Binance with multi-exchange abstraction. Places s
 │  │       │  │PnL    │              │                        │
 │  │       │  │Tracker│              │                        │
 └──┴───────┴──┴───────┴──────────────┴────────────────────────┘
-           │
-┌──────────▼──────────────────────────────────────────────────┐
+
+### Momentum Taker Bot
+┌─────────────────────────────────────────────────────────────┐
+│                   MomentumTakerBot                          │
+│  - main_loop (signal -> IOC order execution)                │
+│  - Signal detection: EMA(400) + epsilon thresholds          │
+│  - Cooldown enforcement (prevents over-trading)             │
+├──────────┬──────────┬──────────────┬────────────────────────┤
+│          │          │              │                        │
+│  Signal  │  Order   │  Risk        │  User Data Stream     │
+│  Engine  │  Manager │  Manager     │  (Binance WebSocket)  │
+│          │          │              │                        │
+│  ┌───────┤  place_  │  ┌───────┐   │  executionReport →    │
+│  │EMA(400)  taker_  │  │Position│  │  on_fill_event()     │
+│  │       │  order() │  │Tracker │  │  outboundAccountPos  │
+│  │epsilon│          │  ├───────┤   │  listen key keepalive │
+│  │cooldown          │  │PnL    │   │                        │
+│  │       │          │  │Tracker│   │                        │
+│  │Latency│          │  │       │   │                        │
+│  │Tracker│          │  │       │   │                        │
+└──┴───────┴──────────┴──┴───────┴───┴────────────────────────┘
+
+### Shared Infrastructure
+┌─────────────────────────────────────────────────────────────┐
 │                   AppLogger (Quill v7.5.0)                  │
 │  AsyncLogger: ConsoleSink + RotatingFileSink               │
 │  Named loggers: "trading", "network", "core", "risk"       │
@@ -35,12 +60,15 @@ C++17 HFT market maker bot for Binance with multi-exchange abstraction. Places s
 │  IExchange Interface                                         │
 │  connect/disconnect, place/cancel/modify orders             │
 │  subscribe_orderbook, get_balance, get_order_status         │
+│  place_market_order, place_ioc_order (taker bot support)   │
 ├─────────────────────────────────────────────────────────────┤
 │  ExchangeFactory::create("binance") → BinanceExchange       │
 ├──────────┬──────────┬───────────────────────────────────────┤
 │ RestClient│ WS Client│ WS Trading Client                    │
 │ (CURL)   │(market)  │ (orders via WS API)                  │
 │ HMAC-256 │ RFC 6455 │ HMAC-SHA256 per request              │
+│ Market/  │          │ IOC support                          │
+│ IOC      │          │                                       │
 └──────────┴──────────┴───────────────────────────────────────┘
 ```
 
@@ -59,16 +87,32 @@ C++17 HFT market maker bot for Binance with multi-exchange abstraction. Places s
 10. UserDataStream receives `executionReport` → `on_fill_event()`
 11. Position/PnL trackers updated from real fill data
 
+### Momentum Strategy Signal Flow
+1. WebSocket receives orderbook update → `handle_orderbook_update()`
+2. Extract best bid/ask from L2 orderbook
+3. `SignalEngine::on_tick(best_bid, best_ask)`:
+   - Update EMA(400) with mid price: `(best_bid + best_ask) / 2.0`
+   - Check BUY threshold: `best_ask > EMA * (1.0 + epsilon)` (momentum up)
+   - Check SELL threshold: `best_bid < EMA * (1.0 - epsilon)` (momentum down)
+   - Enforce cooldown: skip if last signal < cooldown period
+   - Hysteresis: require price cross back to EMA before new signal
+4. If signal fired → notify main loop via condition variable
+5. Main loop validates signal is not stale (< 100ms old)
+6. Risk gate: `should_trade()` checks position, P&L limits
+7. Place IOC limit order via `OrderManager::place_taker_order()`
+8. Record latency: signal detection → order placement time
+9. UserDataStream receives fill → update position/PnL trackers
+
 ### Threading Model
 | Thread | Purpose |
 |--------|---------|
 | Main thread | Bot initialization, signal handling |
-| `main_thread_` | Trading loop (price change → order update) |
+| `main_thread_` | Trading loop (market maker: price change → order update; momentum: signal → order exec) |
 | WebSocket thread | Market data reception (orderbook) |
 | WS Trading thread | Order execution responses |
 | `stream_thread_` | User Data Stream (fill events) |
 | `keepalive_thread_` | Listen key keepalive (30 min interval) |
-| Async cancel/place | `std::thread` for parallel order ops |
+| Async cancel/place | `std::thread` for parallel order ops (market maker only) |
 
 ### Synchronization
 - `orderbook_mutex_`: Protects `current_orderbook_`, `last_orderbook_time_`

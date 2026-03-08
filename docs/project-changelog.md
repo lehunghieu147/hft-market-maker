@@ -4,7 +4,32 @@ All significant changes, features, and fixes are documented here. See `docs/deve
 
 ## [Unreleased]
 
-### Phase 06 - Logging Migration (In Progress)
+### Phase 07 - Momentum Taker Strategy (In Progress)
+- **Status**: Complete
+- **Changes**:
+  - Implemented momentum-based taker trading strategy bot (`momentum_taker`)
+  - Created `EmaEngine` header-only class for EMA(400) calculation
+  - Implemented `SignalEngine` with epsilon thresholds and cooldown enforcement
+  - Added `LatencyTracker` circular buffer for percentile latency analysis
+  - Created `MomentumTakerBot` with signal-driven IOC order execution
+  - Extended `IExchange` with `place_market_order()` and `place_ioc_order()` methods
+  - Enhanced `OrderManager` with `place_taker_order()` for immediate execution
+  - Updated `BinanceExchange` to support market/IOC order types
+  - Modified `RestClient` to handle market/IOC order parameters
+  - Extended `Config` with `MomentumConfig` struct (EMA window, epsilon, cooldown, order size)
+  - Created `config.momentum.json` configuration template
+  - Updated CMakeLists.txt for two-target build (market_maker + momentum_taker)
+  - Fixed signal handler cleanup (removed Quill calls from async-signal-unsafe context)
+  - Added `.env` to .gitignore for credential safety
+- **Strategy Details**:
+  - BUY signal: `bestAsk > EMA(400) * (1.0 + epsilon)` → price breaking above trend
+  - SELL signal: `bestBid < EMA(400) * (1.0 - epsilon)` → price breaking below trend
+  - Cooldown prevents over-trading (default 5 seconds between signals)
+  - Hysteresis: price must cross back to EMA before new signal allowed
+  - IOC limit orders provide price protection vs pure market orders
+- **Build**: Two binaries sharing 16 common source files, separate main.cpp/momentum_main.cpp
+
+### Phase 06 - Logging Migration
 - **Status**: Complete
 - **Commits**: `92ceabd` (docs), migration branch
 - **Changes**:

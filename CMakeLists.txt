@@ -69,9 +69,8 @@ include_directories(
     ${websocketpp_SOURCE_DIR}
 )
 
-# Source files
-set(SOURCES
-    src/main.cpp
+# Common source files (shared between both bots)
+set(COMMON_SOURCES
     # Core
     src/core/config.cpp
     src/core/config_loader.cpp
@@ -86,8 +85,7 @@ set(SOURCES
     src/network/websocket_trading_client.cpp
     src/network/websocket_trading_adapter.cpp
     src/network/user_data_stream.cpp
-    # Trading
-    src/trading/market_maker.cpp
+    # Trading (shared)
     src/trading/order_manager.cpp
     src/trading/order_validator.cpp
     src/trading/rate_limiter.cpp
@@ -95,14 +93,11 @@ set(SOURCES
     src/trading/pnl_tracker.cpp
     src/trading/risk_manager.cpp
     src/trading/volatility_tracker.cpp
+    src/trading/signal_engine.cpp
+    src/trading/latency_tracker.cpp
 )
 
-# Create executable
-add_executable(market_maker ${SOURCES})
-
-# Link libraries
-target_link_libraries(market_maker
-    PRIVATE
+set(LINK_LIBS
     Threads::Threads
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -111,8 +106,35 @@ target_link_libraries(market_maker
     quill::quill
 )
 
+# Static curl requires transitive dependencies - find by full path
+if(UNIX AND NOT APPLE)
+    foreach(_lib nghttp2 idn2 psl ssh gssapi_krb5 lber ldap zstd brotlidec brotlicommon z rtmp)
+        find_library(_${_lib}_path ${_lib} PATHS /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu)
+        if(_${_lib}_path)
+            list(APPEND LINK_LIBS ${_${_lib}_path})
+        endif()
+        unset(_${_lib}_path CACHE)
+    endforeach()
+endif()
+
+# Market Maker executable
+add_executable(market_maker
+    src/main.cpp
+    src/trading/market_maker.cpp
+    ${COMMON_SOURCES}
+)
+target_link_libraries(market_maker PRIVATE ${LINK_LIBS})
+
+# Momentum Taker executable
+add_executable(momentum_taker
+    src/momentum_main.cpp
+    src/trading/momentum_taker.cpp
+    ${COMMON_SOURCES}
+)
+target_link_libraries(momentum_taker PRIVATE ${LINK_LIBS})
+
 # Installation
-install(TARGETS market_maker
+install(TARGETS market_maker momentum_taker
     RUNTIME DESTINATION bin
 )
 

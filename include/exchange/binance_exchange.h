@@ -47,6 +47,14 @@ public:
         const std::string& client_order_id = ""
     ) override;
 
+    std::optional<Order> place_ioc_order(
+        const std::string& symbol,
+        OrderSide side,
+        double price,
+        double quantity,
+        const std::string& client_order_id = ""
+    ) override;
+
     std::optional<bool> cancel_order(
         const std::string& symbol,
         const std::string& order_id
