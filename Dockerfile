@@ -61,8 +61,9 @@ COPY --from=builder --chown=trader:trader /app/out/bin/market_maker ./market_mak
 COPY --from=builder /app/out/lib/*.so* /usr/local/lib/
 RUN ldconfig
 
-# Copy config files
+# Copy config files and create config.json from example (gitignored)
 COPY --chown=trader:trader config/ ./config/
+RUN cp -n config/config.example.json config/config.json
 
 # Switch to non-root user
 USER trader
