@@ -1,5 +1,14 @@
 # Build directories
 build/
+out/
 
 # Config files may contain real API keys - do not commit
 config/*.json
+!config/config.example.json
+
+# Logs
+logs/
+*.log
+
+# Trade logs
+trade.log
