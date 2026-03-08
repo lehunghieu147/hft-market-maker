@@ -3,6 +3,7 @@
 #include <sstream>
 #include <cstring>
 #include <cerrno>
+#include <random>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -34,15 +35,13 @@ public:
             std::cerr << "Failed to create SSL context" << std::endl;
         }
 
-        // Set SSL options to allow older TLS versions and be more permissive
         SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
         SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_2_VERSION);
-
-        // Set cipher suites
         SSL_CTX_set_cipher_list(ssl_ctx, "DEFAULT:!DH");
 
-        // Enable SNI (Server Name Indication)
-        SSL_CTX_set_tlsext_servername_callback(ssl_ctx, nullptr);
+        // Enable SSL certificate verification
+        SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, nullptr);
+        SSL_CTX_set_default_verify_paths(ssl_ctx);
     }
 
     ~Impl() {
@@ -171,13 +170,36 @@ bool WebSocketClient::connect(const std::string& uri) {
         return false;
     }
 
+    // Generate random WebSocket key per RFC 6455 Section 4.1
+    unsigned char ws_key_bytes[16];
+    std::random_device ws_rd;
+    for (int i = 0; i < 16; i++) ws_key_bytes[i] = static_cast<unsigned char>(ws_rd());
+
+    // Base64 encode the 16 random bytes
+    // 16 bytes = 5 full groups of 3 (15 bytes) + 1 remaining byte
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string ws_key;
+    ws_key.reserve(24);
+    for (int i = 0; i < 15; i += 3) {
+        uint32_t n = (ws_key_bytes[i] << 16) | (ws_key_bytes[i+1] << 8) | ws_key_bytes[i+2];
+        ws_key += b64[(n >> 18) & 0x3F];
+        ws_key += b64[(n >> 12) & 0x3F];
+        ws_key += b64[(n >> 6) & 0x3F];
+        ws_key += b64[n & 0x3F];
+    }
+    // Last byte (index 15) with 2 padding chars
+    uint32_t last = ws_key_bytes[15] << 16;
+    ws_key += b64[(last >> 18) & 0x3F];
+    ws_key += b64[(last >> 12) & 0x3F];
+    ws_key += "==";
+
     // Send WebSocket upgrade request
     std::stringstream request;
     request << "GET " << path << " HTTP/1.1\r\n";
     request << "Host: " << host << "\r\n";
     request << "Upgrade: websocket\r\n";
     request << "Connection: Upgrade\r\n";
-    request << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+    request << "Sec-WebSocket-Key: " << ws_key << "\r\n";
     request << "Sec-WebSocket-Version: 13\r\n";
     request << "\r\n";
 
@@ -271,8 +293,10 @@ void WebSocketClient::subscribe_orderbook(const std::string& symbol, int depth) 
         header_len = 4;
     }
 
-    // Masking key (required for client-to-server messages)
-    unsigned char mask[4] = {0x12, 0x34, 0x56, 0x78};
+    // Random masking key per RFC 6455
+    std::random_device rd;
+    unsigned char mask[4];
+    for (int i = 0; i < 4; i++) mask[i] = static_cast<unsigned char>(rd());
     memcpy(&header[header_len], mask, 4);
     header_len += 4;
 
@@ -314,8 +338,10 @@ void WebSocketClient::subscribe_trades(const std::string& symbol) {
         header_len = 4;
     }
 
-    // Masking key (required for client-to-server messages)
-    unsigned char mask[4] = {0x12, 0x34, 0x56, 0x78};
+    // Random masking key per RFC 6455
+    std::random_device rd;
+    unsigned char mask[4];
+    for (int i = 0; i < 4; i++) mask[i] = static_cast<unsigned char>(rd());
     memcpy(&header[header_len], mask, 4);
     header_len += 4;
 
@@ -427,11 +453,12 @@ void WebSocketClient::run_worker() {
 
                     if (payload_len <= 125) {
                         pong_frame[1] = 0x80 | payload_len;  // Masked
-                        // Add simple mask
-                        pong_frame[2] = 0x12;
-                        pong_frame[3] = 0x34;
-                        pong_frame[4] = 0x56;
-                        pong_frame[5] = 0x78;
+                        // Random mask per RFC 6455
+                        std::random_device pong_rd;
+                        pong_frame[2] = static_cast<unsigned char>(pong_rd());
+                        pong_frame[3] = static_cast<unsigned char>(pong_rd());
+                        pong_frame[4] = static_cast<unsigned char>(pong_rd());
+                        pong_frame[5] = static_cast<unsigned char>(pong_rd());
 
                         // Copy and mask payload
                         for (size_t i = 0; i < payload_len; i++) {
@@ -552,11 +579,12 @@ void WebSocketClient::send_ping() {
     ping_frame[0] = 0x89;  // FIN=1, opcode=9 (ping)
     ping_frame[1] = 0x80;  // Masked, payload length = 0
 
-    // Add mask (required for client-to-server)
-    ping_frame[2] = 0x00;
-    ping_frame[3] = 0x00;
-    ping_frame[4] = 0x00;
-    ping_frame[5] = 0x00;
+    // Random mask per RFC 6455
+    std::random_device ping_rd;
+    ping_frame[2] = static_cast<unsigned char>(ping_rd());
+    ping_frame[3] = static_cast<unsigned char>(ping_rd());
+    ping_frame[4] = static_cast<unsigned char>(ping_rd());
+    ping_frame[5] = static_cast<unsigned char>(ping_rd());
 
     int sent = SSL_write(pImpl->ssl, ping_frame, 6);
     if (sent <= 0) {

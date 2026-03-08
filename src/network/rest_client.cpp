@@ -225,10 +225,6 @@ std::optional<std::string> RestClient::send_signed_request(
     std::string signature = generate_signature(query_string);
     query_string += "&signature=" + signature;
 
-    // Debug log
-    std::cout << "Query string: " << query_string.substr(0, 100) << "..." << std::endl;
-    std::cout << "Signature: " << signature << std::endl;
-
     std::string url = pImpl->base_url + endpoint;
     std::string response;
 

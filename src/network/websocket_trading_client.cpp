@@ -48,7 +48,8 @@ WebSocketTradingClient::WebSocketTradingClient(const std::string& api_key, const
                 websocketpp::lib::asio::ssl::context::single_dh_use
             );
 
-            ctx->set_verify_mode(websocketpp::lib::asio::ssl::verify_none);
+            ctx->set_verify_mode(websocketpp::lib::asio::ssl::verify_peer);
+            ctx->set_default_verify_paths();
 
         } catch (std::exception& e) {
             std::cerr << "[SSL] Context setup error: " << e.what() << std::endl;
@@ -74,8 +75,7 @@ WebSocketTradingClient::WebSocketTradingClient(const std::string& api_key, const
         this->on_message(hdl, msg);
     });
 
-    std::cout << "WebSocket Trading Client initialized with API Key: "
-              << api_key_.substr(0, 10) << "..." << std::endl;
+    std::cout << "WebSocket Trading Client initialized" << std::endl;
 }
 
 WebSocketTradingClient::~WebSocketTradingClient() {
