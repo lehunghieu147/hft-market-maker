@@ -329,8 +329,9 @@ std::string MarketMakerBot::format_symbol_for_exchange() {
 }
 
 LatencyMetrics MarketMakerBot::get_metrics() const {
-    // This would return metrics from the order manager
-    // For now, return empty metrics
+    if (order_manager_) {
+        return order_manager_->get_metrics();
+    }
     return LatencyMetrics();
 }
 

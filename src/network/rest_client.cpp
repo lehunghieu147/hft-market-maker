@@ -20,48 +20,15 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
 
 class RestClient::Impl {
 public:
-    std::vector<CURL*> curl_pool;
-    std::mutex pool_mutex;
     std::string base_url;
     std::string api_key;
     std::string api_secret;
     struct curl_slist* headers;
-    size_t pool_index = 0;
     std::vector<std::string> display_assets = {"USDT", "BTC"};  // Default assets to display
 
     Impl(const std::string& url, const std::string& key, const std::string& secret)
         : base_url(url), api_key(key), api_secret(secret), headers(nullptr) {
         curl_global_init(CURL_GLOBAL_DEFAULT);
-
-        // Create connection pool with 4 persistent connections for parallel operations
-        for (int i = 0; i < 4; i++) {
-            CURL* curl = curl_easy_init();
-            if (curl) {
-                // Enable HTTP/2 for multiplexing (faster)
-                curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
-                curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-                curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 30L);  // Reduced from 120
-                curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 10L);  // Reduced from 60
-
-                // Optimize for ultra-low latency
-                curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1L);
-                curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 0L);  // Allow connection reuse
-                curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 0L);  // Don't force fresh connection
-
-                // DNS caching for faster resolution
-                curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 3600L);  // Cache DNS for 1 hour
-
-                // Reduce timeout for faster failure detection
-                curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1000L);  // 1 second connect timeout
-                curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000L);  // 5 second total timeout
-
-                curl_pool.push_back(curl);
-            }
-        }
-
-        // Debug: Show API key being used (first 10 chars only for security)
-        std::cout << "RestClient using API Key: " << api_key.substr(0, 10) << "..." << std::endl;
-        std::cout << "API Key length: " << api_key.length() << std::endl;
 
         // Set default headers
         headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -71,22 +38,43 @@ public:
     }
 
     ~Impl() {
-        for (auto curl : curl_pool) {
-            if (curl) {
-                curl_easy_cleanup(curl);
-            }
-        }
         if (headers) {
             curl_slist_free_all(headers);
         }
         curl_global_cleanup();
     }
 
+    // RAII wrapper for thread-local CURL handle (auto-cleanup on thread exit)
+    struct CurlHandle {
+        CURL* handle = nullptr;
+        CurlHandle() {
+            handle = curl_easy_init();
+            if (handle) {
+                curl_easy_setopt(handle, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+                curl_easy_setopt(handle, CURLOPT_TCP_KEEPALIVE, 1L);
+                curl_easy_setopt(handle, CURLOPT_TCP_KEEPIDLE, 30L);
+                curl_easy_setopt(handle, CURLOPT_TCP_KEEPINTVL, 10L);
+                curl_easy_setopt(handle, CURLOPT_TCP_NODELAY, 1L);
+                curl_easy_setopt(handle, CURLOPT_FORBID_REUSE, 0L);
+                curl_easy_setopt(handle, CURLOPT_FRESH_CONNECT, 0L);
+                curl_easy_setopt(handle, CURLOPT_DNS_CACHE_TIMEOUT, 3600L);
+                curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
+                curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, 5000L);
+            }
+        }
+        ~CurlHandle() {
+            if (handle) {
+                curl_easy_cleanup(handle);
+            }
+        }
+        CurlHandle(const CurlHandle&) = delete;
+        CurlHandle& operator=(const CurlHandle&) = delete;
+    };
+
+    // Thread-local CURL handle: each thread gets its own, RAII cleanup on thread exit
     CURL* get_curl_handle() {
-        std::lock_guard<std::mutex> lock(pool_mutex);
-        CURL* curl = curl_pool[pool_index];
-        pool_index = (pool_index + 1) % curl_pool.size();
-        return curl;
+        thread_local CurlHandle tl_curl;
+        return tl_curl.handle;
     }
 
     std::string hmac_sha256(const std::string& key, const std::string& data) {
@@ -198,13 +186,18 @@ std::optional<std::string> RestClient::send_public_request(
 
     std::string response;
 
-    // Get a curl handle from the pool
     CURL* curl = pImpl->get_curl_handle();
 
+    // Reset to clear stale options from prior requests on this thread
+    curl_easy_reset(curl);
+
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
@@ -448,13 +441,10 @@ std::optional<bool> RestClient::cancel_all_orders(const std::string& symbol) {
 std::optional<Order> RestClient::modify_order(
     const std::string& symbol,
     const std::string& order_id,
+    OrderSide side,
     double new_price,
     double new_quantity) {
 
-    // OPTIMIZATION: Cancel and replace in single API call if supported
-    // For Binance, we need to cancel and place new order, but we can optimize this
-
-    // Format price and quantity with pre-allocated buffers
     char price_buffer[32];
     char quantity_buffer[32];
 
@@ -473,10 +463,10 @@ std::optional<Order> RestClient::modify_order(
         return std::nullopt;
     }
 
-    // Immediately place new order (reuse connection)
+    // Place new order with correct side
     std::vector<std::pair<std::string, std::string>> new_params = {
         {"symbol", symbol},
-        {"side", "BUY"},  // This should be passed as parameter
+        {"side", side == OrderSide::BUY ? "BUY" : "SELL"},
         {"type", "LIMIT"},
         {"timeInForce", "GTC"},
         {"quantity", quantity_buffer},
@@ -489,7 +479,6 @@ std::optional<Order> RestClient::modify_order(
         return std::nullopt;
     }
 
-    // Parse response
     Json::Reader reader;
     Json::Value root;
     if (!reader.parse(*new_response, root)) {
@@ -499,6 +488,7 @@ std::optional<Order> RestClient::modify_order(
     Order order;
     order.order_id = std::to_string(root["orderId"].asInt64());
     order.symbol = root["symbol"].asString();
+    order.side = side;
     order.price = std::stod(root["price"].asString());
     order.quantity = std::stod(root["origQty"].asString());
 

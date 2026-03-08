@@ -205,39 +205,49 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         std::cout << "=============================================" << std::endl;
     }
 
-    update_metrics(start_time, orderbook_time);
+    update_metrics(start_time, orderbook_time, bid_success, ask_success);
 
     return bid_success && ask_success;
 }
 
 bool OrderManager::cancel_all_active_orders() {
-    std::lock_guard<std::mutex> lock(orders_mutex_);
+    // Copy orders outside lock to avoid holding mutex during network I/O
+    std::shared_ptr<Order> bid_copy;
+    std::shared_ptr<Order> ask_copy;
+    {
+        std::lock_guard<std::mutex> lock(orders_mutex_);
+        bid_copy = active_bid_order_;
+        ask_copy = active_ask_order_;
+    }
 
-    // Cancel both orders in parallel if they exist
+    // Cancel both orders in parallel (no lock held)
     std::vector<std::future<bool>> cancel_futures;
 
-    if (active_bid_order_) {
+    if (bid_copy) {
         cancel_futures.push_back(std::async(std::launch::async,
-            [this, order = active_bid_order_]() {
+            [this, order = bid_copy]() {
                 return cancel_order(order);
             }));
     }
 
-    if (active_ask_order_) {
+    if (ask_copy) {
         cancel_futures.push_back(std::async(std::launch::async,
-            [this, order = active_ask_order_]() {
+            [this, order = ask_copy]() {
                 return cancel_order(order);
             }));
     }
 
-    // Wait for all cancellations to complete
     bool success = true;
     for (auto& future : cancel_futures) {
         success &= future.get();
     }
 
-    active_bid_order_.reset();
-    active_ask_order_.reset();
+    // Clear active orders after cancellation
+    {
+        std::lock_guard<std::mutex> lock(orders_mutex_);
+        active_bid_order_.reset();
+        active_ask_order_.reset();
+    }
 
     return success;
 }
@@ -355,16 +365,15 @@ bool OrderManager::should_update_orders(double new_mid_price) const {
 }
 
 void OrderManager::update_metrics(const std::chrono::steady_clock::time_point& start_time,
-                                  const std::chrono::steady_clock::time_point& orderbook_time) {
+                                  const std::chrono::steady_clock::time_point& orderbook_time,
+                                  bool bid_success, bool ask_success) {
     auto end_time = std::chrono::steady_clock::now();
 
-    // Calculate execution latency (time to execute function)
     auto execution_latency_us = std::chrono::duration_cast<std::chrono::microseconds>(
         end_time - start_time
     ).count();
     double execution_latency_ms = execution_latency_us / 1000.0;
 
-    // Calculate reaction latency (time from orderbook received to order placed)
     auto reaction_latency_us = std::chrono::duration_cast<std::chrono::microseconds>(
         end_time - orderbook_time
     ).count();
@@ -373,7 +382,7 @@ void OrderManager::update_metrics(const std::chrono::steady_clock::time_point& s
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     metrics_.update_latency(execution_latency_ms);
     metrics_.update_reaction_latency(reaction_latency_ms);
-    metrics_.successful_orders += 2;  // Both bid and ask
+    metrics_.successful_orders += (bid_success ? 1 : 0) + (ask_success ? 1 : 0);
 
     // Display reaction latency only
     std::cout << "\n================================================" << std::endl;
@@ -391,9 +400,9 @@ void OrderManager::update_metrics(const std::chrono::steady_clock::time_point& s
 }
 
 std::string OrderManager::generate_client_order_id(OrderSide side) {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<> dis(100000, 999999);
+    thread_local std::random_device rd;
+    thread_local std::mt19937 gen(rd());
+    thread_local std::uniform_int_distribution<> dis(100000, 999999);
 
     std::stringstream ss;
     ss << "MM_" << (side == OrderSide::BUY ? "BID_" : "ASK_")

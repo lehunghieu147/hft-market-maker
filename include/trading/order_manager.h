@@ -56,7 +56,8 @@ private:
     bool cancel_order(const std::shared_ptr<Order>& order);
     bool should_update_orders(double new_mid_price) const;
     void update_metrics(const std::chrono::steady_clock::time_point& start_time,
-                       const std::chrono::steady_clock::time_point& orderbook_time);
+                       const std::chrono::steady_clock::time_point& orderbook_time,
+                       bool bid_success, bool ask_success);
     std::string generate_client_order_id(OrderSide side);
 };
 

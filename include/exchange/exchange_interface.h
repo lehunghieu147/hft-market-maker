@@ -92,6 +92,7 @@ public:
     virtual std::optional<Order> modify_order(
         const std::string& symbol,
         const std::string& order_id,
+        OrderSide side,
         double new_price,
         double new_quantity
     ) = 0;

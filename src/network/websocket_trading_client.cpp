@@ -111,7 +111,7 @@ bool WebSocketTradingClient::connect(const std::string& url) {
         }
 
         if (!connected_) {
-            std::cerr << "Connection timeout after 15 seconds" << std::endl;
+            std::cerr << "Connection timeout after 2 seconds" << std::endl;
             disconnect();
             return false;
         }

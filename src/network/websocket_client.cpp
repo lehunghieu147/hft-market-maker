@@ -130,21 +130,23 @@ bool WebSocketClient::connect(const std::string& uri) {
         std::cerr << "Failed to set send timeout" << std::endl;
     }
 
-    // Resolve hostname
-    struct hostent* server = gethostbyname(host.c_str());
-    if (!server) {
-        std::cerr << "Failed to resolve hostname: " << host << std::endl;
+    // Resolve hostname (thread-safe)
+    struct addrinfo hints{}, *result = nullptr;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    int gai_err = getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &result);
+    if (gai_err != 0 || !result) {
+        std::cerr << "Failed to resolve hostname: " << host
+                  << " (" << gai_strerror(gai_err) << ")" << std::endl;
         return false;
     }
 
     // Connect to server
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+    int connect_result = ::connect(pImpl->socket_fd, result->ai_addr, result->ai_addrlen);
+    freeaddrinfo(result);
 
-    if (::connect(pImpl->socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect_result < 0) {
         std::cerr << "Failed to connect to server" << std::endl;
         close(pImpl->socket_fd);
         pImpl->socket_fd = -1;
@@ -288,7 +290,6 @@ void WebSocketClient::subscribe_orderbook(const std::string& symbol, int depth) 
 void WebSocketClient::subscribe_trades(const std::string& symbol) {
     if (!connected_) return;
 
-    // Similar to subscribe_orderbook
     std::stringstream json;
     json << "{";
     json << "\"method\":\"SUBSCRIBE\",";
@@ -298,8 +299,35 @@ void WebSocketClient::subscribe_trades(const std::string& symbol) {
 
     std::string message = json.str();
 
-    // Send WebSocket frame (simplified implementation)
-    // In production, this should properly construct WebSocket frames
+    // WebSocket frame header (text frame)
+    unsigned char header[10];
+    int header_len = 2;
+    header[0] = 0x81;  // FIN=1, opcode=1 (text)
+
+    size_t payload_len = message.length();
+    if (payload_len <= 125) {
+        header[1] = 0x80 | payload_len;  // Mask=1, length
+    } else if (payload_len <= 65535) {
+        header[1] = 0x80 | 126;
+        header[2] = (payload_len >> 8) & 0xFF;
+        header[3] = payload_len & 0xFF;
+        header_len = 4;
+    }
+
+    // Masking key (required for client-to-server messages)
+    unsigned char mask[4] = {0x12, 0x34, 0x56, 0x78};
+    memcpy(&header[header_len], mask, 4);
+    header_len += 4;
+
+    // Mask the payload
+    std::string masked_payload = message;
+    for (size_t i = 0; i < masked_payload.length(); i++) {
+        masked_payload[i] ^= mask[i % 4];
+    }
+
+    // Send frame
+    SSL_write(pImpl->ssl, header, header_len);
+    SSL_write(pImpl->ssl, masked_payload.c_str(), masked_payload.length());
 }
 
 void WebSocketClient::set_message_handler(MessageHandler handler) {
@@ -454,6 +482,7 @@ void WebSocketClient::run_worker() {
 }
 
 void WebSocketClient::handle_reconnect() {
+    // Prevent multiple concurrent reconnect threads
     if (reconnect_thread_.joinable()) {
         return;
     }
@@ -469,6 +498,8 @@ void WebSocketClient::handle_reconnect() {
 
             std::this_thread::sleep_for(reconnect_delay_);
 
+            if (!should_run_) break;
+
             if (connect(current_uri_)) {
                 std::cout << "Reconnected successfully!" << std::endl;
                 break;
@@ -479,8 +510,7 @@ void WebSocketClient::handle_reconnect() {
             std::cerr << "Failed to reconnect after " << max_attempts << " attempts" << std::endl;
         }
     });
-
-    reconnect_thread_.detach();
+    // Thread is joinable, will be joined in destructor - no detach()
 }
 
 void WebSocketClient::run_heartbeat() {

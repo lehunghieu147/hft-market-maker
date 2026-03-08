@@ -252,18 +252,16 @@ std::optional<bool> WebSocketTradingAdapter::cancel_all_orders(const std::string
 std::optional<Order> WebSocketTradingAdapter::modify_order(
     const std::string& symbol,
     const std::string& order_id,
+    OrderSide side,
     double new_price,
     double new_quantity) {
-
-    // For Binance, modification requires cancel and replace
-    // We can optimize this by sending both requests in parallel
 
     // Cancel existing order asynchronously
     ws_trading_client_->cancel_order(symbol, order_id, false);
 
-    // Immediately place new order
+    // Place new order with correct side
     auto new_order_id = ws_trading_client_->place_limit_order(
-        symbol, OrderSide::BUY, new_price, new_quantity, "", true
+        symbol, side, new_price, new_quantity, "", true
     );
 
     if (!new_order_id) {
@@ -273,6 +271,7 @@ std::optional<Order> WebSocketTradingAdapter::modify_order(
     Order order;
     order.order_id = *new_order_id;
     order.symbol = symbol;
+    order.side = side;
     order.price = new_price;
     order.quantity = new_quantity;
     order.status = OrderStatus::NEW;

@@ -38,10 +38,11 @@ public:
 
     std::optional<bool> cancel_all_orders(const std::string& symbol);
 
-    // Order modification (faster than cancel + new)
+    // Order modification (cancel + replace)
     std::optional<Order> modify_order(
         const std::string& symbol,
         const std::string& order_id,
+        OrderSide side,
         double new_price,
         double new_quantity
     );

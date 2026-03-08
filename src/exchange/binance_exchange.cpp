@@ -304,6 +304,7 @@ std::optional<bool> BinanceExchange::cancel_all_orders(const std::string& symbol
 std::optional<Order> BinanceExchange::modify_order(
     const std::string& symbol,
     const std::string& order_id,
+    OrderSide side,
     double new_price,
     double new_quantity
 ) {
@@ -317,20 +318,6 @@ std::optional<Order> BinanceExchange::modify_order(
 
     double formatted_price = format_price(new_price, binance_symbol);
     double formatted_qty = format_quantity(new_quantity, binance_symbol);
-
-    // Use parallel modify_order for better performance
-    // Note: We need to get the current order's side first
-    auto open_orders = rest_client_->get_open_orders(binance_symbol);
-    OrderSide side = OrderSide::BUY; // Default
-
-    if (open_orders.has_value()) {
-        for (const auto& order : open_orders.value()) {
-            if (order.order_id == order_id) {
-                side = order.side;
-                break;
-            }
-        }
-    }
 
     return rest_client_->modify_order_parallel(
         binance_symbol,
