@@ -1,7 +1,7 @@
 #ifndef REST_CLIENT_H
 #define REST_CLIENT_H
 
-#include "types.h"
+#include "core/types.h"
 #include <string>
 #include <memory>
 #include <optional>

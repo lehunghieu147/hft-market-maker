@@ -1,7 +1,7 @@
 #ifndef WEBSOCKET_TRADING_CLIENT_H
 #define WEBSOCKET_TRADING_CLIENT_H
 
-#include "types.h"
+#include "core/types.h"
 #include <websocketpp/config/asio_client.hpp>
 #include <websocketpp/client.hpp>
 #include <string>

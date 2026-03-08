@@ -1,7 +1,7 @@
 #ifndef EXCHANGE_INTERFACE_H
 #define EXCHANGE_INTERFACE_H
 
-#include "types.h"
+#include "core/types.h"
 #include <string>
 #include <memory>
 #include <optional>

@@ -1,11 +1,11 @@
-#ifndef MARKET_MAKER_V2_H
-#define MARKET_MAKER_V2_H
+#ifndef MARKET_MAKER_H
+#define MARKET_MAKER_H
 
-#include "config.h"
-#include "types.h"
-#include "exchange_interface.h"
-#include "order_manager.h"
-#include "logger.h"
+#include "core/config.h"
+#include "core/types.h"
+#include "exchange/exchange_interface.h"
+#include "trading/order_manager.h"
+#include "core/logger.h"
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -15,10 +15,10 @@
 namespace MarketMaker {
 
 // Refactored Market Maker Bot that works with any exchange
-class MarketMakerBotV2 {
+class MarketMakerBot {
 public:
-    explicit MarketMakerBotV2(const Config& config);
-    ~MarketMakerBotV2();
+    explicit MarketMakerBot(const Config& config);
+    ~MarketMakerBot();
 
     // Main control methods
     bool initialize();
@@ -71,4 +71,4 @@ private:
 
 } // namespace MarketMaker
 
-#endif // MARKET_MAKER_V2_H
+#endif // MARKET_MAKER_H

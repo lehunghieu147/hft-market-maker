@@ -60,22 +60,23 @@ include_directories(
 # Source files
 set(SOURCES
     src/main.cpp
-    # src/market_maker.cpp
-    src/websocket_client.cpp
-    src/rest_client.cpp
-    src/order_manager.cpp
-    src/logger.cpp
-    src/config_loader.cpp
-    src/rate_limiter.cpp
-    src/order_validator.cpp
-    # Multi-exchange support files
-    src/config.cpp
-    src/exchange_factory.cpp
-    src/binance_exchange.cpp
-    src/market_maker.cpp
-    # WebSocket Trading files
-    src/websocket_trading_client.cpp
-    src/websocket_trading_adapter.cpp
+    # Core
+    src/core/config.cpp
+    src/core/config_loader.cpp
+    src/core/logger.cpp
+    # Exchange
+    src/exchange/exchange_factory.cpp
+    src/exchange/binance_exchange.cpp
+    # Network
+    src/network/rest_client.cpp
+    src/network/websocket_client.cpp
+    src/network/websocket_trading_client.cpp
+    src/network/websocket_trading_adapter.cpp
+    # Trading
+    src/trading/market_maker.cpp
+    src/trading/order_manager.cpp
+    src/trading/order_validator.cpp
+    src/trading/rate_limiter.cpp
 )
 
 # Create executable
@@ -98,12 +99,6 @@ install(TARGETS market_maker
 
 # Create logs directory
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/logs)
-
-# Copy configuration files to build directory
-# configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.json
-#     ${CMAKE_CURRENT_BINARY_DIR}/config.json COPYONLY)
-# configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.testnet.json
-#     ${CMAKE_CURRENT_BINARY_DIR}/config.testnet.json COPYONLY)
 
 # Print build configuration
 message(STATUS "")

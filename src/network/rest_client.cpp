@@ -1,4 +1,4 @@
-#include "rest_client.h"
+#include "network/rest_client.h"
 #include <curl/curl.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>

@@ -1,9 +1,9 @@
 #ifndef WEBSOCKET_TRADING_ADAPTER_H
 #define WEBSOCKET_TRADING_ADAPTER_H
 
-#include "exchange_interface.h"
-#include "websocket_trading_client.h"
-#include "websocket_client.h"
+#include "exchange/exchange_interface.h"
+#include "network/websocket_trading_client.h"
+#include "network/websocket_client.h"
 #include <memory>
 #include <string>
 

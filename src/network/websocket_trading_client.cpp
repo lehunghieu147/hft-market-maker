@@ -1,4 +1,4 @@
-#include "websocket_trading_client.h"
+#include "network/websocket_trading_client.h"
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 #include <websocketpp/common/thread.hpp>

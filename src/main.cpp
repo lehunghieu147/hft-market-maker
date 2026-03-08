@@ -1,5 +1,5 @@
-#include "market_maker_v2.h"
-#include "config_loader.h"
+#include "trading/market_maker.h"
+#include "core/config_loader.h"
 #include <iostream>
 #include <signal.h>
 #include <atomic>
@@ -10,7 +10,7 @@
 using namespace MarketMaker;
 
 std::atomic<bool> should_exit(false);
-std::unique_ptr<MarketMakerBotV2> bot;
+std::unique_ptr<MarketMakerBot> bot;
 
 void signal_handler(int signal) {
     std::cout << "\nReceived signal " << signal << ", shutting down..." << std::endl;
@@ -131,7 +131,7 @@ int main(int argc, char* argv[]) {
                   << "  Spread: " << (config.spread_percentage * 100) << "%\n";
 
         // Create and initialize bot
-        bot = std::make_unique<MarketMakerBotV2>(config);
+        bot = std::make_unique<MarketMakerBot>(config);
 
         std::cout << "Initializing bot..." << std::endl;
         if (!bot->initialize()) {
