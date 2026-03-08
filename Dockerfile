@@ -55,7 +55,7 @@ RUN useradd -m -u 10000 trader && \
 WORKDIR /app
 
 # Copy compiled binary from builder
-COPY --from=builder --chown=trader:trader /app/out/market_maker ./market_maker
+COPY --from=builder --chown=trader:trader /app/out/bin/market_maker ./market_maker
 
 # Copy config files
 COPY --chown=trader:trader config/ ./config/
