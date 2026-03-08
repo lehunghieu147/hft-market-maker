@@ -1,0 +1,50 @@
+# Build artifacts
+out/
+build/
+*.o
+*.a
+*.so
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Version control
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Plans and reports
+plans/
+
+# Logs (don't copy existing logs into image)
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# macOS
+.DS_Store
+
+# Linux
+*~
+
+# Environment files (sensitive)
+.env
+.env.*
+*.key
+*.pem
+
+# Test files
+tests/
+*.test
