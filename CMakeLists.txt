@@ -32,9 +32,29 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(jsoncpp)
 
+# Asio (standalone)
+FetchContent_Declare(
+    asio
+    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+    GIT_TAG asio-1-28-0
+)
+FetchContent_MakeAvailable(asio)
+
+# WebSocket++
+FetchContent_Declare(
+    websocketpp
+    GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
+    GIT_TAG 0.8.2
+)
+FetchContent_MakeAvailable(websocketpp)
+
+add_compile_definitions(ASIO_STANDALONE _WEBSOCKETPP_CPP11_STL_)
+
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${asio_SOURCE_DIR}/asio/include
+    ${websocketpp_SOURCE_DIR}
 )
 
 # Source files
