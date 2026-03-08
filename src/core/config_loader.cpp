@@ -83,6 +83,22 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
             }
         }
 
+        // Risk management settings
+        if (root.isMember("risk")) {
+            if (root["risk"].isMember("max_daily_loss"))
+                config.max_daily_loss = root["risk"]["max_daily_loss"].asDouble();
+            if (root["risk"].isMember("max_position_size"))
+                config.max_position_size = root["risk"]["max_position_size"].asDouble();
+            if (root["risk"].isMember("max_drawdown"))
+                config.max_drawdown = root["risk"]["max_drawdown"].asDouble();
+            if (root["risk"].isMember("max_consecutive_errors"))
+                config.max_consecutive_errors = root["risk"]["max_consecutive_errors"].asInt();
+            if (root["risk"].isMember("maker_fee_rate"))
+                config.maker_fee_rate = root["risk"]["maker_fee_rate"].asDouble();
+            if (root["risk"].isMember("taker_fee_rate"))
+                config.taker_fee_rate = root["risk"]["taker_fee_rate"].asDouble();
+        }
+
         // Performance settings
         if (root.isMember("performance")) {
             config.order_update_cooldown = std::chrono::milliseconds(

@@ -33,8 +33,21 @@ bool MarketMakerBot::initialize() {
         return false;
     }
 
-    // Initialize order manager with exchange interface
-    order_manager_ = std::make_shared<OrderManager>(exchange_, config_);
+    // Initialize risk manager
+    RiskConfig risk_config;
+    risk_config.max_daily_loss = config_.max_daily_loss;
+    risk_config.max_position_size = config_.max_position_size;
+    risk_config.max_drawdown = config_.max_drawdown;
+    risk_config.max_consecutive_errors = config_.max_consecutive_errors;
+    risk_config.maker_fee_rate = config_.maker_fee_rate;
+    risk_config.taker_fee_rate = config_.taker_fee_rate;
+    risk_manager_ = std::make_shared<RiskManager>(risk_config);
+    logger_->log(LogLevel::INFO, "Risk manager initialized (max_pos=" +
+                 std::to_string(config_.max_position_size) + ", max_loss=" +
+                 std::to_string(config_.max_daily_loss) + ")");
+
+    // Initialize order manager with exchange interface and risk manager
+    order_manager_ = std::make_shared<OrderManager>(exchange_, config_, risk_manager_);
     logger_->log(LogLevel::INFO, "Order manager initialized successfully");
 
     initialized_ = true;
@@ -307,6 +320,18 @@ void MarketMakerBot::print_status() {
     std::cout << "\n  Reconnects: " << metrics.reconnect_count << std::endl;
     std::cout << "  Uptime: " << std::fixed << std::setprecision(2)
               << metrics.get_uptime_percentage() << "%" << std::endl;
+
+    if (risk_manager_) {
+        std::cout << "\nRisk:" << std::endl;
+        std::cout << "  Position: " << std::fixed << std::setprecision(6)
+                  << risk_manager_->position_tracker().get_position() << std::endl;
+        std::cout << "  Daily P&L: " << std::fixed << std::setprecision(4)
+                  << risk_manager_->pnl_tracker().get_daily_pnl() << std::endl;
+        std::cout << "  Total P&L: " << risk_manager_->pnl_tracker().get_realized_pnl() << std::endl;
+        std::cout << "  Fees Paid: " << risk_manager_->pnl_tracker().get_total_fees() << std::endl;
+        std::cout << "  Kill Switch: " << (risk_manager_->is_kill_switch_active() ? "ACTIVE" : "off") << std::endl;
+    }
+
     std::cout << "=========================================" << std::endl;
 }
 

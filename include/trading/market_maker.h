@@ -5,6 +5,7 @@
 #include "core/types.h"
 #include "exchange/exchange_interface.h"
 #include "trading/order_manager.h"
+#include "trading/risk_manager.h"
 #include "core/logger.h"
 #include <memory>
 #include <atomic>
@@ -35,6 +36,7 @@ private:
     // Core components - now using exchange interface
     std::shared_ptr<IExchange> exchange_;  // Generic exchange interface
     std::shared_ptr<OrderManager> order_manager_;
+    std::shared_ptr<RiskManager> risk_manager_;
     std::shared_ptr<Logger> logger_;
 
     // State

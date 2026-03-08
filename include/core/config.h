@@ -63,6 +63,14 @@ struct Config {
     int max_requests_per_second = 10;
     int max_weight_per_minute = 1200;  // Binance-specific weight limit
 
+    // Risk management
+    double max_daily_loss = -100.0;
+    double max_position_size = 0.5;
+    double max_drawdown = -500.0;
+    int max_consecutive_errors = 5;
+    double maker_fee_rate = -0.0001;
+    double taker_fee_rate = 0.001;
+
     // Exchange-specific parameters (optional)
     std::map<std::string, std::string> extra_params;
 

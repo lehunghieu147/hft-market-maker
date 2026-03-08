@@ -77,6 +77,9 @@ set(SOURCES
     src/trading/order_manager.cpp
     src/trading/order_validator.cpp
     src/trading/rate_limiter.cpp
+    src/trading/position_tracker.cpp
+    src/trading/pnl_tracker.cpp
+    src/trading/risk_manager.cpp
 )
 
 # Create executable

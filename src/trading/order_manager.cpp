@@ -7,8 +7,9 @@
 
 namespace MarketMaker {
 
-OrderManager::OrderManager(std::shared_ptr<IExchange> exchange, const Config& config)
-    : exchange_(exchange), config_(config) {
+OrderManager::OrderManager(std::shared_ptr<IExchange> exchange, const Config& config,
+                           std::shared_ptr<RiskManager> risk_manager)
+    : exchange_(exchange), config_(config), risk_manager_(risk_manager) {
     metrics_.start_time = std::chrono::steady_clock::now();
 }
 
@@ -98,6 +99,28 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
 
     if (!need_update) {
         return true;
+    }
+
+    // Risk management gate
+    if (risk_manager_ && !risk_manager_->should_trade()) {
+        std::cerr << "[ORDER] Trading blocked by risk manager" << std::endl;
+        return false;
+    }
+
+    // Order validation
+    auto validation = order_validator_.validate_market_maker_orders(
+        bid_price, ask_price, config_.order_size, mid_price);
+    if (!validation.is_valid) {
+        std::cerr << "[ORDER] Validation failed: " << validation.error_message << std::endl;
+        return false;
+    }
+
+    // Position limit check (atomic pair check under single lock)
+    if (risk_manager_) {
+        if (!risk_manager_->position_tracker().can_place_pair(config_.order_size, config_.order_size)) {
+            std::cerr << "[ORDER] Position limit would be exceeded" << std::endl;
+            return false;
+        }
     }
 
     std::cout << "\n=========== PLACING NEW ORDERS ===========" << std::endl;
@@ -308,9 +331,17 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
         std::cerr << "Failed to place " << (side == OrderSide::BUY ? "BID" : "ASK")
                   << " order at " << price << std::endl;
 
+        if (risk_manager_) risk_manager_->on_error();
+
         std::lock_guard<std::mutex> lock(metrics_mutex_);
         metrics_.failed_orders++;
         return false;
+    }
+
+    if (risk_manager_) {
+        risk_manager_->on_success();
+        // Track position (approximate until User Data Stream in Phase 04)
+        risk_manager_->position_tracker().on_fill(side, price, quantity);
     }
 
     std::lock_guard<std::mutex> lock(orders_mutex_);

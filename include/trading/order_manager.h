@@ -4,6 +4,8 @@
 #include "core/types.h"
 #include "core/config.h"
 #include "exchange/exchange_interface.h"
+#include "trading/risk_manager.h"
+#include "trading/order_validator.h"
 #include <memory>
 #include <mutex>
 #include <atomic>
@@ -16,7 +18,8 @@ namespace MarketMaker {
 
 class OrderManager {
 public:
-    OrderManager(std::shared_ptr<IExchange> exchange, const Config& config);
+    OrderManager(std::shared_ptr<IExchange> exchange, const Config& config,
+                 std::shared_ptr<RiskManager> risk_manager = nullptr);
     ~OrderManager();
 
     // Order management
@@ -40,6 +43,8 @@ public:
 private:
     std::shared_ptr<IExchange> exchange_;
     Config config_;
+    std::shared_ptr<RiskManager> risk_manager_;
+    OrderValidator order_validator_;
 
     mutable std::mutex orders_mutex_;
     std::shared_ptr<Order> active_bid_order_;
