@@ -1,7 +1,7 @@
 #ifndef EXCHANGE_FACTORY_H
 #define EXCHANGE_FACTORY_H
 
-#include "exchange_interface.h"
+#include "exchange/exchange_interface.h"
 #include <memory>
 #include <string>
 #include <map>
@@ -12,13 +12,6 @@ namespace MarketMaker {
 // Supported exchange types
 enum class ExchangeType {
     BINANCE,
-    COINBASE,
-    KRAKEN,
-    FTX,       // For historical reference
-    BYBIT,
-    OKX,
-    BITGET,
-    KUCOIN,
     UNKNOWN
 };
 

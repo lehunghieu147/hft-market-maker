@@ -1,9 +1,9 @@
 #ifndef ORDER_MANAGER_H
 #define ORDER_MANAGER_H
 
-#include "types.h"
-#include "config.h"
-#include "exchange_interface.h"
+#include "core/types.h"
+#include "core/config.h"
+#include "exchange/exchange_interface.h"
 #include <memory>
 #include <mutex>
 #include <atomic>

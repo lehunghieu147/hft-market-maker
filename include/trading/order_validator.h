@@ -1,7 +1,7 @@
 #ifndef ORDER_VALIDATOR_H
 #define ORDER_VALIDATOR_H
 
-#include "types.h"
+#include "core/types.h"
 #include <string>
 #include <optional>
 #include <iostream>

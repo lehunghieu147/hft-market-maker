@@ -1,7 +1,7 @@
 #ifndef CONFIG_LOADER_H
 #define CONFIG_LOADER_H
 
-#include "config.h"
+#include "core/config.h"
 #include <string>
 #include <optional>
 

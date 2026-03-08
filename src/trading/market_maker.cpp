@@ -1,24 +1,24 @@
-#include "market_maker_v2.h"
-#include "exchange_factory.h"
-#include "exchange_interface.h"
+#include "trading/market_maker.h"
+#include "exchange/exchange_factory.h"
+#include "exchange/exchange_interface.h"
 #include <iostream>
 #include <iomanip>
 #include <chrono>
 
 namespace MarketMaker {
 
-MarketMakerBotV2::MarketMakerBotV2(const Config& config) : config_(config) {
+MarketMakerBot::MarketMakerBot(const Config& config) : config_(config) {
     logger_ = std::make_shared<Logger>(config.log_file);
 }
 
-MarketMakerBotV2::~MarketMakerBotV2() {
+MarketMakerBot::~MarketMakerBot() {
     stop();
     if (main_thread_.joinable()) {
         main_thread_.join();
     }
 }
 
-bool MarketMakerBotV2::initialize() {
+bool MarketMakerBot::initialize() {
     logger_->log(LogLevel::INFO, "Initializing Market Maker Bot V2...");
 
     // Validate configuration
@@ -43,7 +43,7 @@ bool MarketMakerBotV2::initialize() {
     return true;
 }
 
-bool MarketMakerBotV2::setup_exchange() {
+bool MarketMakerBot::setup_exchange() {
     logger_->log(LogLevel::INFO, "Setting up exchange: " + config_.exchange_type);
 
     // Update config endpoints based on exchange type
@@ -100,7 +100,7 @@ bool MarketMakerBotV2::setup_exchange() {
     return true;
 }
 
-void MarketMakerBotV2::run() {
+void MarketMakerBot::run() {
     if (!initialized_) {
         logger_->log(LogLevel::ERROR,"Bot not initialized. Call initialize() first.");
         return;
@@ -117,7 +117,7 @@ void MarketMakerBotV2::run() {
     logger_->log(LogLevel::INFO, "Market Maker Bot V2 is running on " + config_.exchange_type);
 }
 
-void MarketMakerBotV2::stop() {
+void MarketMakerBot::stop() {
     logger_->log(LogLevel::INFO, "Stopping Market Maker Bot V2...");
     running_ = false;
 
@@ -137,7 +137,7 @@ void MarketMakerBotV2::stop() {
     logger_->log(LogLevel::INFO, "Market Maker Bot V2 stopped");
 }
 
-void MarketMakerBotV2::main_loop() {
+void MarketMakerBot::main_loop() {
     auto last_status_print = std::chrono::steady_clock::now();
 
     while (running_) {
@@ -168,7 +168,7 @@ void MarketMakerBotV2::main_loop() {
     }
 }
 
-void MarketMakerBotV2::check_and_update_orders() {
+void MarketMakerBot::check_and_update_orders() {
     double mid_price = current_mid_price_.load();
 
     if (mid_price <= 0) {
@@ -186,7 +186,7 @@ void MarketMakerBotV2::check_and_update_orders() {
     order_manager_->update_orders_if_needed(mid_price, orderbook_time);
 }
 
-void MarketMakerBotV2::handle_orderbook_update(const OrderBook& orderbook) {
+void MarketMakerBot::handle_orderbook_update(const OrderBook& orderbook) {
     // Capture timestamp immediately when orderbook update is received
     auto orderbook_received_time = std::chrono::steady_clock::now();
 
@@ -201,7 +201,7 @@ void MarketMakerBotV2::handle_orderbook_update(const OrderBook& orderbook) {
     update_mid_price();
 }
 
-void MarketMakerBotV2::update_mid_price() {
+void MarketMakerBot::update_mid_price() {
     std::lock_guard<std::mutex> lock(orderbook_mutex_);
 
     if (!current_orderbook_.bids.empty() && !current_orderbook_.asks.empty()) {
@@ -228,7 +228,7 @@ void MarketMakerBotV2::update_mid_price() {
     }
 }
 
-void MarketMakerBotV2::handle_connection_status(bool connected) {
+void MarketMakerBot::handle_connection_status(bool connected) {
     if (connected) {
         logger_->log(LogLevel::INFO, "Connected to " + config_.exchange_type + " exchange");
     } else {
@@ -236,7 +236,7 @@ void MarketMakerBotV2::handle_connection_status(bool connected) {
     }
 }
 
-bool MarketMakerBotV2::validate_config() {
+bool MarketMakerBot::validate_config() {
     // Validate exchange type
     if (!ExchangeFactory::is_supported(config_.exchange_type)) {
         logger_->log(LogLevel::ERROR,"Unsupported exchange type: " + config_.exchange_type);
@@ -271,7 +271,7 @@ bool MarketMakerBotV2::validate_config() {
     return true;
 }
 
-void MarketMakerBotV2::print_status() {
+void MarketMakerBot::print_status() {
     auto metrics = order_manager_->get_metrics();
 
     std::cout << "\n========== Market Maker Status ==========" << std::endl;
@@ -310,7 +310,7 @@ void MarketMakerBotV2::print_status() {
     std::cout << "=========================================" << std::endl;
 }
 
-std::string MarketMakerBotV2::format_symbol_for_exchange() {
+std::string MarketMakerBot::format_symbol_for_exchange() {
     // Different exchanges use different symbol formats
     // This is a simplified version - in production, each exchange
     // would handle its own symbol formatting
@@ -328,7 +328,7 @@ std::string MarketMakerBotV2::format_symbol_for_exchange() {
     return config_.symbol;
 }
 
-LatencyMetrics MarketMakerBotV2::get_metrics() const {
+LatencyMetrics MarketMakerBot::get_metrics() const {
     // This would return metrics from the order manager
     // For now, return empty metrics
     return LatencyMetrics();

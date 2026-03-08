@@ -1,9 +1,9 @@
 #ifndef BINANCE_EXCHANGE_H
 #define BINANCE_EXCHANGE_H
 
-#include "exchange_interface.h"
-#include "websocket_client.h"
-#include "rest_client.h"
+#include "exchange/exchange_interface.h"
+#include "network/websocket_client.h"
+#include "network/rest_client.h"
 #include <memory>
 #include <mutex>
 #include <atomic>

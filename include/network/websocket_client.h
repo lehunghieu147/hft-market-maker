@@ -1,7 +1,7 @@
 #ifndef WEBSOCKET_CLIENT_H
 #define WEBSOCKET_CLIENT_H
 
-#include "types.h"
+#include "core/types.h"
 #include <functional>
 #include <thread>
 #include <atomic>
