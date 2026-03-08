@@ -18,14 +18,27 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Check if Docker Compose is installed
-if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-    echo "❌ Docker Compose is not installed!"
-    echo "Install Docker Compose: sudo apt-get install docker-compose-plugin"
+# Detect Docker Compose version (v2 built-in or v1 standalone)
+COMPOSE_CMD=""
+if docker compose version &> /dev/null; then
+    COMPOSE_CMD="docker compose"
+    echo "✅ Docker Compose V2 detected (built-in)"
+elif command -v docker-compose &> /dev/null; then
+    COMPOSE_CMD="docker-compose"
+    echo "✅ Docker Compose V1 detected (standalone)"
+else
+    echo "❌ Docker Compose is not available!"
+    echo ""
+    echo "Your Docker version should have built-in Compose V2."
+    echo "Try running: docker compose version"
+    echo ""
+    echo "If that fails, install standalone version:"
+    echo "  sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose"
+    echo "  sudo chmod +x /usr/local/bin/docker-compose"
     exit 1
 fi
 
-echo "✅ Docker and Docker Compose are installed"
+echo "✅ Docker installed"
 echo ""
 
 # Check if .env file exists
@@ -112,44 +125,44 @@ case $ACTION in
     1)
         echo ""
         echo "🔨 Building and starting container..."
-        docker-compose up -d --build
+        $COMPOSE_CMD up -d --build
         echo ""
         echo "✅ Container started successfully!"
         echo ""
-        echo "📊 View logs with: docker-compose logs -f"
-        echo "🛑 Stop with: docker-compose down"
+        echo "📊 View logs with: $COMPOSE_CMD logs -f"
+        echo "🛑 Stop with: $COMPOSE_CMD down"
         ;;
     2)
         echo ""
         echo "🔄 Rebuilding and restarting..."
-        docker-compose down
-        docker-compose up -d --build
+        $COMPOSE_CMD down
+        $COMPOSE_CMD up -d --build
         echo ""
         echo "✅ Container restarted successfully!"
         ;;
     3)
         echo ""
         echo "▶️  Starting container..."
-        docker-compose up -d
+        $COMPOSE_CMD up -d
         echo ""
         echo "✅ Container started!"
         ;;
     4)
         echo ""
         echo "🛑 Stopping container..."
-        docker-compose down
+        $COMPOSE_CMD down
         echo ""
         echo "✅ Container stopped!"
         ;;
     5)
         echo ""
         echo "📊 Showing logs (Ctrl+C to exit)..."
-        docker-compose logs -f
+        $COMPOSE_CMD logs -f
         ;;
     6)
         echo ""
         echo "📊 Container Status:"
-        docker-compose ps
+        $COMPOSE_CMD ps
         echo ""
         echo "💾 Resource Usage:"
         docker stats --no-stream hft-market-maker
