@@ -121,35 +121,39 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         ask_order_to_cancel = active_ask_order_;
     }
 
-    // Cancel both orders in parallel if they exist
-    if (bid_order_to_cancel && ask_order_to_cancel) {
-        // Use async with timeout for better control
-        auto cancel_bid_future = std::async(std::launch::async, [this, bid_order_to_cancel]() {
+    // Cancel orders in parallel - handle each order independently
+    std::vector<std::future<bool>> cancel_futures;
+
+    if (bid_order_to_cancel) {
+        cancel_futures.push_back(std::async(std::launch::async, [this, bid_order_to_cancel]() {
             return cancel_order(bid_order_to_cancel);
-        });
-        auto cancel_ask_future = std::async(std::launch::async, [this, ask_order_to_cancel]() {
+        }));
+    }
+
+    if (ask_order_to_cancel) {
+        cancel_futures.push_back(std::async(std::launch::async, [this, ask_order_to_cancel]() {
             return cancel_order(ask_order_to_cancel);
-        });
+        }));
+    }
 
-        // Wait with timeout (100ms max per cancel)
-        constexpr auto timeout = std::chrono::milliseconds(100);
+    // Wait for all cancellations with timeout (100ms max per cancel)
+    constexpr auto timeout = std::chrono::milliseconds(100);
 
-        if (cancel_bid_future.wait_for(timeout) == std::future_status::ready) {
-            cancel_bid_future.get();
+    for (size_t i = 0; i < cancel_futures.size(); ++i) {
+        if (cancel_futures[i].wait_for(timeout) == std::future_status::ready) {
+            cancel_futures[i].get();
         } else {
-            std::cerr << "[WARNING] Cancel BID timeout after 100ms" << std::endl;
+            std::cerr << "[WARNING] Cancel order timeout after 100ms" << std::endl;
         }
+    }
 
-        if (cancel_ask_future.wait_for(timeout) == std::future_status::ready) {
-            cancel_ask_future.get();
-        } else {
-            std::cerr << "[WARNING] Cancel ASK timeout after 100ms" << std::endl;
-        }
-
-        // Clear active orders after cancellation attempt
-        {
-            std::lock_guard<std::mutex> lock(orders_mutex_);
+    // Clear active orders after cancellation attempts
+    {
+        std::lock_guard<std::mutex> lock(orders_mutex_);
+        if (bid_order_to_cancel) {
             active_bid_order_.reset();
+        }
+        if (ask_order_to_cancel) {
             active_ask_order_.reset();
         }
     }

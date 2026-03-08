@@ -1,2 +1,5 @@
 # Build directories
 build/
+
+# Config files may contain real API keys - do not commit
+config/*.json
