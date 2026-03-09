@@ -4,11 +4,72 @@ All significant changes, features, and fixes are documented here. See `docs/deve
 
 ## [Unreleased]
 
+### Phase B1-B5 - Advanced Strategies & Backtesting (2025-03-09)
+- **Status**: Complete
+- **Scope**: Inventory-aware quoting, order book imbalance detection, multi-timeframe momentum, dynamic sizing, backtesting framework
+- **New Executables**: `backtest` for tick-level replay testing
+- **New Tools**: `tools/download-historical-data.sh` for fetching Binance tick data
+
+### Phase B1 - Avellaneda-Stoikov Model
+- **Status**: Complete
+- **Changes**:
+  - Added `AvellanedaStoikovModel` class (`include/trading/avellaneda-stoikov-model.h`)
+  - Implements inventory-aware quoting: reservation price adjusts for position, optimal spread widens with volatility
+  - Configuration: `use_avellaneda_stoikov`, `as_gamma` (risk aversion), `as_kappa` (order intensity), `as_time_horizon_sec`
+  - Reservation price: `r(s,q,t) = s - q*gamma*sigma^2*tau` (when long, r < mid; when short, r > mid)
+  - Optimal spread: `delta = gamma*sigma^2*tau + (2/gamma)*ln(1 + gamma/kappa)`
+  - Prevents crossed orders via `half_spread >= mid_price * 1e-6`
+
+### Phase B2 - Multi-Timeframe Momentum & VWAP Tracker
+- **Status**: Complete
+- **Changes**:
+  - Created `VwapTracker` class (rolling VWAP with Welford variance, upper/lower bands)
+  - Extended `SignalEngine` with multi-timeframe confirmation (fast EMA + slow EMA)
+  - Configuration: `use_multi_timeframe`, `fast_ema_window` (default 8), `slow_ema_window` (default 50), `volume_expansion_threshold` (default 1.2)
+  - Signal fires only when both EMAs confirm: fast must cross slow AND volume >= 1.2x average
+  - Reduces false signals and improves trade quality
+
+### Phase B3 - Order Book Imbalance Detection
+- **Status**: Complete
+- **Changes**:
+  - Created `OrderBookImbalanceTracker` class (OBI computation and EMA smoothing)
+  - OBI formula: `(bid_volume - ask_volume) / (bid_volume + ask_volume)` → range [-1, +1]
+  - Positive OBI = buy pressure (compress bid spread), Negative OBI = sell pressure (compress ask spread)
+  - Configuration: `use_obi_tilt`, `obi_levels` (orderbook depth, default 5), `obi_tilt_factor` (max tilt %, default 0.3), `obi_min_volume` (min vol for signal)
+  - Spread tilt: `bid_spread = base_spread * (1 - tilt_factor * max(0, obi))`, `ask_spread = base_spread * (1 + tilt_factor * max(0, -obi))`
+
+### Phase B4 - Volatility-Adjusted Position Sizing
+- **Status**: Complete
+- **Changes**:
+  - Extended `VolatilityTracker` with dynamic sizing logic
+  - Configuration: `use_dynamic_sizing`, `vol_sizing_exponent` (default 0.5 = sqrt), `min_size_multiplier` (default 0.5), `max_size_multiplier` (default 2.0)
+  - Size scaling: `order_size = base_size * (baseline_vol / current_vol) ^ exponent`, clamped to [min_mult, max_mult]
+  - Larger orders in calm markets, smaller in turbulent markets (risk-adjusted)
+  - Works alongside Avellaneda-Stoikov model for coordinated inventory + vol management
+
+### Phase B5 - Backtesting Framework
+- **Status**: Complete
+- **Changes**:
+  - Created `BacktestEngine` class for tick-level replay from CSV data
+  - Created `DataLoader` for parsing CSV: timestamp, OHLCV, bids[5], asks[5]
+  - Created `SimulatedExchange` for order book simulation, matching, fill latency injection
+  - Created `PerformanceMetrics` class: Sharpe ratio, max drawdown, win rate, avg trade duration, trade list
+  - Created `backtest_main.cpp` executable: `./backtest <data.csv> [output.csv]`
+  - CSV export: PnL curve + trade log for external analysis (Jupyter, etc.)
+  - Configuration: `simulation.network_delay_ms` (latency injection for realistic fills)
+- **Usage**:
+  - Download data: `./tools/download-historical-data.sh DOGEEUSDT 2025-03-01 ./data/`
+  - Run backtest: `./backtest ./data/DOGEEUSDT_2025-03-01.csv ./results.csv`
+  - Analyze results in Jupyter/Excel
+
 ### Bug Fixes & Enhancements (Recent)
 - **WebSocketClient heap-use-after-free fix**: Destructor now properly shuts down socket before joining threads, then frees SSL resources. Prevents use-after-free errors on disconnect when threads try to access freed SSL context.
 - **Config precision fields**: Added `price_precision` and `quantity_precision` to trading config section. Enables proper handling of low-price assets (e.g., DOGE with price_precision=4 instead of default=2) to prevent order crossing due to rounding errors.
 
-### Phase 07 - Momentum Taker Strategy (In Progress)
+### Phase 08 - Backtesting & Advanced Strategies (In Progress)
+- See Phase B1-B5 section above
+
+### Phase 07 - Momentum Taker Strategy
 - **Status**: Complete
 - **Changes**:
   - Implemented momentum-based taker trading strategy bot (`momentum_taker`)

@@ -112,6 +112,35 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
                 config.taker_fee_rate = root["risk"]["taker_fee_rate"].asDouble();
         }
 
+        // Avellaneda-Stoikov model settings
+        if (root.isMember("strategy")) {
+            auto& s = root["strategy"];
+            if (s.isMember("use_avellaneda_stoikov"))
+                config.use_avellaneda_stoikov = s["use_avellaneda_stoikov"].asBool();
+            if (s.isMember("as_gamma"))
+                config.as_gamma = s["as_gamma"].asDouble();
+            if (s.isMember("as_kappa"))
+                config.as_kappa = s["as_kappa"].asDouble();
+            if (s.isMember("as_time_horizon_sec"))
+                config.as_time_horizon_sec = s["as_time_horizon_sec"].asDouble();
+            if (s.isMember("use_dynamic_sizing"))
+                config.use_dynamic_sizing = s["use_dynamic_sizing"].asBool();
+            if (s.isMember("vol_sizing_exponent"))
+                config.vol_sizing_exponent = s["vol_sizing_exponent"].asDouble();
+            if (s.isMember("min_size_multiplier"))
+                config.min_size_multiplier = s["min_size_multiplier"].asDouble();
+            if (s.isMember("max_size_multiplier"))
+                config.max_size_multiplier = s["max_size_multiplier"].asDouble();
+            if (s.isMember("use_obi_tilt"))
+                config.use_obi_tilt = s["use_obi_tilt"].asBool();
+            if (s.isMember("obi_levels"))
+                config.obi_levels = s["obi_levels"].asInt();
+            if (s.isMember("obi_tilt_factor"))
+                config.obi_tilt_factor = s["obi_tilt_factor"].asDouble();
+            if (s.isMember("obi_min_volume"))
+                config.obi_min_volume = s["obi_min_volume"].asDouble();
+        }
+
         // Performance settings
         if (root.isMember("performance")) {
             config.order_update_cooldown = std::chrono::milliseconds(
@@ -145,6 +174,14 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
                 config.momentum.tick_recording = m["tick_recording"].asBool();
             if (m.isMember("tick_log_path"))
                 config.momentum.tick_log_path = m["tick_log_path"].asString();
+            if (m.isMember("use_multi_timeframe"))
+                config.momentum.use_multi_timeframe = m["use_multi_timeframe"].asBool();
+            if (m.isMember("fast_ema_window"))
+                config.momentum.fast_ema_window = m["fast_ema_window"].asInt();
+            if (m.isMember("slow_ema_window"))
+                config.momentum.slow_ema_window = m["slow_ema_window"].asInt();
+            if (m.isMember("volume_expansion_threshold"))
+                config.momentum.volume_expansion_threshold = m["volume_expansion_threshold"].asDouble();
         }
 
         // Logging settings

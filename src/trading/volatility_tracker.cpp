@@ -33,12 +33,17 @@ void VolatilityTracker::on_price(double price) {
         recompute_welford();
     }
 
-    // Set baseline after enough samples
-    if (!baseline_set_ && count_ >= window_size_ / 2) {
+    // Baseline volatility: initialize once, then slowly adapt via EWMA
+    if (count_ >= window_size_ / 2) {
         double variance = (count_ > 1) ? m2_ / static_cast<double>(count_ - 1) : 0.0;
-        baseline_volatility_ = std::sqrt(std::max(0.0, variance));
-        if (baseline_volatility_ > 0) {
+        double current_vol = std::sqrt(std::max(0.0, variance));
+        if (!baseline_set_ && current_vol > 0) {
+            baseline_volatility_ = current_vol;
             baseline_set_ = true;
+        } else if (baseline_set_) {
+            constexpr double baseline_alpha = 0.001;  // Very slow adaptation
+            baseline_volatility_ = baseline_alpha * current_vol
+                                 + (1.0 - baseline_alpha) * baseline_volatility_;
         }
     }
 }
@@ -85,6 +90,21 @@ double VolatilityTracker::get_adjusted_spread(double base_spread) const {
 
     double adjusted = base_spread * vol_ratio;
     return std::clamp(adjusted, min_spread_, max_spread_);
+}
+
+double VolatilityTracker::get_baseline_volatility() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return baseline_volatility_;
+}
+
+double VolatilityTracker::get_volatility_ratio() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!baseline_set_ || baseline_volatility_ <= 0 || count_ < 2) return 1.0;
+
+    double variance = m2_ / static_cast<double>(count_ - 1);
+    double current_vol = std::sqrt(std::max(0.0, variance));
+    double ratio = current_vol / baseline_volatility_;
+    return std::clamp(ratio, 0.5, 2.0);
 }
 
 void VolatilityTracker::reset() {

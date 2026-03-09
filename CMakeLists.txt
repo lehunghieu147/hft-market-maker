@@ -96,6 +96,7 @@ set(COMMON_SOURCES
     src/trading/volatility_tracker.cpp
     src/trading/signal_engine.cpp
     src/trading/latency_tracker.cpp
+    src/trading/orderbook-imbalance-tracker.cpp
 )
 
 set(LINK_LIBS
@@ -133,6 +134,34 @@ add_executable(momentum_taker
     ${COMMON_SOURCES}
 )
 target_link_libraries(momentum_taker PRIVATE ${LINK_LIBS})
+
+# Backtest executable
+add_executable(backtest
+    src/backtest_main.cpp
+    src/backtesting/backtest-engine.cpp
+    src/backtesting/data-loader.cpp
+    src/backtesting/simulated-exchange.cpp
+    src/trading/volatility_tracker.cpp
+    src/trading/position_tracker.cpp
+    src/core/app_logger.cpp
+)
+target_link_libraries(backtest PRIVATE Threads::Threads quill::quill)
+
+# Phase B Test executable
+add_executable(phase_b_tests
+    tests/phase-b-tests.cpp
+    src/trading/volatility_tracker.cpp
+    src/trading/risk_manager.cpp
+    src/trading/position_tracker.cpp
+    src/trading/pnl_tracker.cpp
+    src/trading/orderbook-imbalance-tracker.cpp
+    src/trading/signal_engine.cpp
+    src/core/app_logger.cpp
+    src/backtesting/data-loader.cpp
+    src/backtesting/simulated-exchange.cpp
+    src/backtesting/backtest-engine.cpp
+)
+target_link_libraries(phase_b_tests PRIVATE Threads::Threads quill::quill)
 
 option(BUILD_BENCHMARKS "Build benchmarks" ON)
 

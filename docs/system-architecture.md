@@ -2,53 +2,79 @@
 
 ## Overview
 
-C++17 HFT trading system for Binance with multi-exchange abstraction. Contains two trading strategies:
-1. **Market Maker Bot**: Places simultaneous BID/ASK limit orders around VWAP mid-price, adjusts spreads by volatility
-2. **Momentum Taker Bot**: EMA(400)-based momentum detection, executes IOC limit orders on threshold crossings
+C++17 HFT trading system for Binance with multi-exchange abstraction. Contains three trading strategies:
+1. **Market Maker Bot**: Places simultaneous BID/ASK limit orders around VWAP mid-price, adjusts spreads by volatility, optionally using Avellaneda-Stoikov model and OBI-based tilting
+2. **Momentum Taker Bot**: EMA(400)-based momentum detection with optional multi-timeframe confirmation, executes IOC limit orders on threshold crossings
+3. **Backtesting Engine**: Tick-level replay framework for strategy validation with realistic latency simulation
 
 ## Component Diagram
 
-### Market Maker Bot
+### Market Maker Bot (Enhanced)
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      MarketMakerBot                         │
 │  - main_loop (price change -> order update)                 │
 │  - VWAP mid price from orderbook depth                      │
 │  - volatility feed to VolatilityTracker                     │
-├──────────┬──────────┬──────────────┬────────────────────────┤
-│          │          │              │                        │
-│  Order   │  Risk    │  Volatility  │  WebSocket Trading API │
-│  Manager │  Manager │  Tracker     │  (Order + User Data)  │
-│          │          │              │                        │
-│  ┌───────┤  ┌───────┤  Welford's   │  executionReport →    │
-│  │Validator  │Position  online alg  │  on_fill_event()     │
-│  │       │  │Tracker │              │  outboundAccountPos  │
-│  │       │  │       │              │  WS ping/pong (20s)   │
-│  │       │  ├───────┤              │                        │
-│  │       │  │PnL    │              │                        │
-│  │       │  │Tracker│              │                        │
-└──┴───────┴──┴───────┴──────────────┴────────────────────────┘
+├────────┬─────────┬──────────┬──────────┬────────────────────┤
+│ Order  │ Risk    │Volatility│  VWAP   │WebSocket Trading   │
+│Manager │Manager  │ Tracker  │ Tracker │(Order+User Data)   │
+├────────┼─────────┼──────────┼──────────┼────────────────────┤
+│        │         │ Welford's│ Welford │executionReport →   │
+│Avellan │Position │ online  │+ stdev  │on_fill_event()     │
+│eda-    │Tracker  │ algorithm│ bands   │outboundAccountPos  │
+│Stoikov │        │         │         │WS ping/pong (20s)  │
+│(if en) │├────────┤         │         │                    │
+│        ││PnL Trk │         │         │                    │
+│        │└────────┴─────────┴─────────┘                    │
+│OBI Tilt│  (OBI Tracker: bid_vol/ask_vol imbalance)       │
+│(if en) │                                                 │
+│        │  Dynamic Sizing: vol_sizing_exponent config      │
+└────────┴──────────────────────────────────────────────────┘
 
-### Momentum Taker Bot
+### Momentum Taker Bot (Enhanced)
 ┌─────────────────────────────────────────────────────────────┐
 │                   MomentumTakerBot                          │
 │  - main_loop (signal -> IOC order execution)                │
 │  - Signal detection: EMA(400) + epsilon thresholds          │
+│  - Multi-timeframe confirmation (if enabled)                │
 │  - Cooldown enforcement (prevents over-trading)             │
 ├──────────┬──────────┬──────────────┬────────────────────────┤
-│          │          │              │                        │
-│  Signal  │  Order   │  Risk        │  WebSocket Trading API │
-│  Engine  │  Manager │  Manager     │  (Order + User Data)  │
-│          │          │              │                        │
-│  ┌───────┤  place_  │  ┌───────┐   │  executionReport →    │
-│  │EMA(400)  taker_  │  │Position│  │  on_fill_event()     │
-│  │       │  order() │  │Tracker │  │  outboundAccountPos  │
-│  │epsilon│          │  ├───────┤   │  WS ping/pong (20s)   │
-│  │cooldown          │  │PnL    │   │                        │
-│  │       │          │  │Tracker│   │                        │
-│  │Latency│          │  │       │   │                        │
-│  │Tracker│          │  │       │   │                        │
-└──┴───────┴──────────┴──┴───────┴───┴────────────────────────┘
+│ Signal   │  Order   │  Risk        │  WebSocket Trading API │
+│ Engine   │  Manager │  Manager     │  (Order + User Data)  │
+├──────────┼──────────┼──────────────┼────────────────────────┤
+│ EMA(400) │ place_   │ Position     │executionReport →      │
+│ Fast EMA │ taker_   │ Tracker      │on_fill_event()       │
+│(opt)     │ order()  │            │ outboundAccountPos    │
+│ Slow EMA │          │ PnL Tracker  │WS ping/pong (20s)     │
+│(opt)     │          │            │                        │
+│ Epsilon+ │          │ Dynamic      │                        │
+│ Cooldown │          │ Sizing       │                        │
+│ Hysteresi│          │ (vol-based)  │                        │
+│ Latency  │          │            │                        │
+│ Tracker  │          │            │                        │
+└──────────┴──────────┴──────────────┴────────────────────────┘
+
+### Backtesting Framework
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     BacktestEngine                          │
+│  - Tick-level replay from CSV (timestamp, OHLCV, L2)       │
+│  - Strategy callback receives OrderBook + SimulatedExchange │
+│  - Latency injection: network_delay_ms config               │
+├─────────────────────────────────────────────────────────────┤
+│ DataLoader              SimulatedExchange                    │
+│ - CSV tick parser       - Synthetic orderbook               │
+│ - OHLCV extraction      - Order matching (bid/ask)          │
+│ - L2 book construction  - Fill latency simulation           │
+│                         - Balance tracking                  │
+├─────────────────────────────────────────────────────────────┤
+│ PerformanceMetrics                                          │
+│ - Sharpe ratio, max drawdown, win rate                      │
+│ - Trade list, cumulative PnL curve                          │
+│ - Export to CSV for external analysis                       │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ### Shared Infrastructure
 ┌─────────────────────────────────────────────────────────────┐
@@ -174,21 +200,63 @@ AppLogger::shutdown(); // Flushes all pending logs, stops backend
 
 ## Configuration Management
 
-### Precision Settings
-Trading configuration now includes asset-specific decimal precision:
-- **`price_precision`** (default: 2): Decimal places for order prices. Low-price assets like DOGE require higher precision (e.g., 4) to prevent rounding errors that cause order crossing.
-- **`quantity_precision`** (default: 6): Decimal places for order quantities.
+### Phase B Advanced Strategy Configuration
 
-These settings are critical for exchange compliance: orders placed with incorrect precision are rejected. Binance enforces precision based on symbol LOT_SIZE and PRICE_FILTER rules.
-
-### Configuration File Structure
+#### Avellaneda-Stoikov Model (B1)
+```yaml
+strategy:
+  use_avellaneda_stoikov: true      # Enable inventory-aware quoting
+  as_gamma: 0.001                   # Risk aversion (higher = wider spreads)
+  as_kappa: 1.5                     # Order arrival intensity (higher = tighter)
+  as_time_horizon_sec: 300.0        # Rolling time window for spread narrowing
 ```
+
+#### Multi-Timeframe Momentum (B2)
+```yaml
+strategy:
+  use_multi_timeframe: true         # Require both EMAs to confirm
+  fast_ema_window: 8                # Fast EMA period
+  slow_ema_window: 50               # Slow EMA period
+  volume_expansion_threshold: 1.2   # Volume must be 1.2x avg to confirm
+```
+
+#### Order Book Imbalance Tilting (B3)
+```yaml
+strategy:
+  use_obi_tilt: true                # Enable OBI-based spread tilting
+  obi_levels: 5                     # Orderbook depth for OBI calculation
+  obi_tilt_factor: 0.3              # Max tilt as % of spread (30%)
+  obi_min_volume: 50.0              # Min volume for signal validity
+```
+
+#### Dynamic Position Sizing (B4)
+```yaml
+strategy:
+  use_dynamic_sizing: true          # Scale order size by volatility
+  vol_sizing_exponent: 0.5          # Power for scaling (0.5 = sqrt)
+  min_size_multiplier: 0.5          # Min size relative to base
+  max_size_multiplier: 2.0          # Max size relative to base
+```
+
+### Precision Settings
+- **`price_precision`** (default: 2): Decimal places for order prices
+- **`quantity_precision`** (default: 6): Decimal places for order quantities
+
+### Full Config Structure Example
+```yaml
 trading:
   symbol: "DOGEEUSDT"
   order_size: 100
   spread_percentage: 0.1
-  price_precision: 4      # Custom precision for low-price assets
-  quantity_precision: 1   # LOT_SIZE precision
+  price_precision: 4
+  quantity_precision: 1
+  # Phase B Strategy Features
+  use_avellaneda_stoikov: true
+  as_gamma: 0.001
+  use_obi_tilt: true
+  obi_levels: 5
+  use_dynamic_sizing: true
+  vol_sizing_exponent: 0.5
 ```
 
 ## Exchange Abstraction

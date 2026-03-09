@@ -54,6 +54,32 @@ bool MarketMakerBot::initialize() {
     volatility_tracker_ = std::make_shared<VolatilityTracker>(100, 0.001, 0.05);
     logger_->log(LogLevel::INFO, "Volatility tracker initialized");
 
+    // Wire volatility tracker into risk manager for dynamic sizing
+    if (config_.use_dynamic_sizing && risk_manager_) {
+        risk_manager_->set_volatility_tracker(volatility_tracker_);
+        logger_->log(LogLevel::INFO, "Dynamic volatility-adjusted sizing enabled");
+    }
+
+    // Initialize Avellaneda-Stoikov model if enabled
+    if (config_.use_avellaneda_stoikov) {
+        as_model_ = std::make_unique<AvellanedaStoikovModel>(
+            config_.as_gamma, config_.as_kappa, config_.as_time_horizon_sec);
+        as_horizon_start_ = std::chrono::steady_clock::now();
+        logger_->log(LogLevel::INFO, "Avellaneda-Stoikov model enabled (gamma=" +
+                     std::to_string(config_.as_gamma) + " kappa=" +
+                     std::to_string(config_.as_kappa) + " horizon=" +
+                     std::to_string(config_.as_time_horizon_sec) + "s)");
+    }
+
+    // Initialize OBI tracker if enabled
+    if (config_.use_obi_tilt) {
+        obi_tracker_ = std::make_unique<OrderBookImbalanceTracker>(
+            config_.obi_levels, 0.3, config_.obi_min_volume);
+        logger_->log(LogLevel::INFO, "OBI tilt enabled (levels=" +
+                     std::to_string(config_.obi_levels) + " tilt_factor=" +
+                     std::to_string(config_.obi_tilt_factor) + ")");
+    }
+
     // Wire fill callback through exchange's WS trading connection
     if (exchange_->supports_websocket_trading()) {
         exchange_->set_fill_callback(
@@ -149,8 +175,8 @@ void MarketMakerBot::run() {
 }
 
 void MarketMakerBot::stop() {
+    if (!running_.exchange(false)) return;  // Already stopped, avoid double-join
     logger_->log(LogLevel::INFO, "Stopping Market Maker Bot V2...");
-    running_ = false;
 
     // Notify condition variable to wake up main loop
     price_change_cv_.notify_all();
@@ -210,8 +236,72 @@ void MarketMakerBot::check_and_update_orders() {
     auto latest = orderbook_ring_.drain_latest();
     auto orderbook_time = latest ? latest->received_time : std::chrono::steady_clock::now();
 
-    // Use OrderManager to handle all order logic with latency tracking
-    order_manager_->update_orders_if_needed(mid_price, orderbook_time);
+    // Update OBI tracker if enabled and we have orderbook data
+    double obi_tilt = 0.0;
+    if (obi_tracker_ && latest) {
+        obi_tracker_->update(latest->book);
+        if (obi_tracker_->is_significant()) {
+            obi_tilt = obi_tracker_->smoothed_obi() * config_.obi_tilt_factor;
+            LOG_INFO(quill_logger_, "[OBI] raw={:.3f} smoothed={:.3f} tilt={:.4f}",
+                     obi_tracker_->raw_obi(), obi_tracker_->smoothed_obi(), obi_tilt);
+        }
+    }
+
+    if (as_model_) {
+        // Avellaneda-Stoikov: compute inventory-aware bid/ask prices
+        double inventory = risk_manager_ ? risk_manager_->position_tracker().get_position() : 0.0;
+        double volatility = volatility_tracker_ ? volatility_tracker_->get_volatility() : 0.0;
+
+        // Rolling time horizon: seconds remaining until next reset
+        auto now = std::chrono::steady_clock::now();
+        double elapsed = std::chrono::duration<double>(now - as_horizon_start_).count();
+        double time_remaining = config_.as_time_horizon_sec - std::fmod(elapsed, config_.as_time_horizon_sec);
+
+        if (elapsed >= config_.as_time_horizon_sec) {
+            as_horizon_start_ = now;
+        }
+
+        auto quote = as_model_->compute(mid_price, inventory, volatility, time_remaining);
+
+        // Apply OBI tilt: positive OBI (buy pressure) -> tighten bid, widen ask
+        double bid_price = quote.bid_price * (1.0 + obi_tilt);
+        double ask_price = quote.ask_price * (1.0 - obi_tilt);
+
+        // Guard against crossed orders from aggressive tilt
+        if (bid_price >= ask_price) {
+            double center = (bid_price + ask_price) / 2.0;
+            bid_price = center - center * 1e-6;
+            ask_price = center + center * 1e-6;
+        }
+
+        LOG_INFO(quill_logger_,
+                 "[AS] mid={:.2f} inv={:.6f} vol={:.6f} tau={:.1f}s "
+                 "rprice={:.2f} spread={:.4f} bid={:.2f} ask={:.2f}",
+                 mid_price, inventory, volatility, time_remaining,
+                 quote.reservation_price, quote.optimal_spread, bid_price, ask_price);
+
+        [[maybe_unused]] bool ok = order_manager_->place_market_maker_orders_with_prices(
+            mid_price, bid_price, ask_price, orderbook_time);
+    } else if (obi_tilt != 0.0) {
+        // Fixed spread + OBI tilt
+        double spread = config_.spread_percentage;
+        double bid_offset = spread * (1.0 - obi_tilt);
+        double ask_offset = spread * (1.0 + obi_tilt);
+        double bid_price = mid_price * (1.0 - bid_offset);
+        double ask_price = mid_price * (1.0 + ask_offset);
+
+        // Guard against crossed orders
+        if (bid_price >= ask_price) {
+            bid_price = mid_price * (1.0 - spread);
+            ask_price = mid_price * (1.0 + spread);
+        }
+
+        [[maybe_unused]] bool ok = order_manager_->place_market_maker_orders_with_prices(
+            mid_price, bid_price, ask_price, orderbook_time);
+    } else {
+        // Default: fixed spread from config
+        order_manager_->update_orders_if_needed(mid_price, orderbook_time);
+    }
 }
 
 void MarketMakerBot::handle_orderbook_update(const OrderBook& orderbook) {

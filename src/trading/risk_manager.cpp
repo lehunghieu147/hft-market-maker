@@ -1,5 +1,7 @@
 #include "trading/risk_manager.h"
 #include "core/app_logger.h"
+#include <cmath>
+#include <algorithm>
 
 namespace {
     quill::Logger* get_logger() {
@@ -55,6 +57,30 @@ void RiskManager::on_error() {
 
 void RiskManager::on_success() {
     consecutive_errors_.store(0);
+}
+
+double RiskManager::adjusted_order_size(double base_size, double exponent,
+                                         double min_mult, double max_mult) const {
+    if (!volatility_tracker_) return base_size;
+
+    double vol_ratio = volatility_tracker_->get_volatility_ratio();
+    if (vol_ratio <= 0.0) return base_size;
+
+    // Inverse relationship: high vol -> smaller size
+    double multiplier = std::pow(1.0 / vol_ratio, exponent);
+    multiplier = std::clamp(multiplier, min_mult, max_mult);
+    return base_size * multiplier;
+}
+
+double RiskManager::adjusted_position_limit(double base_limit) const {
+    if (!volatility_tracker_) return base_limit;
+
+    double vol_ratio = volatility_tracker_->get_volatility_ratio();
+    if (vol_ratio <= 0.0) return base_limit;
+
+    // Inverse relationship: high vol -> tighter limit, clamped to [0.5x, 1.5x]
+    double multiplier = std::clamp(1.0 / vol_ratio, 0.5, 1.5);
+    return base_limit * multiplier;
 }
 
 } // namespace MarketMaker

@@ -26,6 +26,12 @@ struct MomentumConfig {
     double min_profit_bps = 0.0;      // Min profit threshold (basis points) above spread+fees
     bool tick_recording = false;      // Enable tick recording
     std::string tick_log_path = "logs/ticks.bin";
+
+    // Multi-timeframe signal mode
+    bool use_multi_timeframe = false;      // Enable dual-confirmation signals
+    int fast_ema_window = 8;               // Fast EMA period
+    int slow_ema_window = 50;              // Slow EMA period
+    double volume_expansion_threshold = 1.2;  // Volume must be 1.2x avg to confirm
 };
 
 struct Config {
@@ -82,6 +88,24 @@ struct Config {
     int max_consecutive_errors = 5;
     double maker_fee_rate = -0.0001;
     double taker_fee_rate = 0.001;
+
+    // Avellaneda-Stoikov model parameters
+    bool use_avellaneda_stoikov = false;    // Enable AS inventory-aware quoting
+    double as_gamma = 0.001;               // Risk aversion (higher = wider spreads)
+    double as_kappa = 1.5;                 // Order arrival intensity
+    double as_time_horizon_sec = 300.0;    // Rolling time window (seconds)
+
+    // Dynamic volatility-adjusted sizing parameters
+    bool use_dynamic_sizing = false;        // Enable vol-adjusted order sizing
+    double vol_sizing_exponent = 0.5;       // Power for size scaling (0.5 = square root)
+    double min_size_multiplier = 0.25;      // Min size as fraction of base
+    double max_size_multiplier = 2.0;       // Max size as fraction of base
+
+    // Order Book Imbalance (OBI) tilt parameters
+    bool use_obi_tilt = false;              // Enable OBI-based spread tilting
+    int obi_levels = 5;                     // Number of orderbook levels for OBI
+    double obi_tilt_factor = 0.3;           // Max tilt as fraction of spread (0.3 = 30%)
+    double obi_min_volume = 50.0;           // Min total volume for OBI signal
 
     // Exchange-specific parameters (optional)
     std::map<std::string, std::string> extra_params;

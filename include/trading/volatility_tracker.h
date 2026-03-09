@@ -22,6 +22,12 @@ public:
     // Get spread adjusted by relative volatility
     double get_adjusted_spread(double base_spread) const;
 
+    // Get baseline volatility (slow-moving EWMA of rolling stddev)
+    double get_baseline_volatility() const;
+
+    // Get volatility ratio (current / baseline), clamped to [0.5, 2.0]
+    double get_volatility_ratio() const;
+
     // Reset all state
     void reset();
 

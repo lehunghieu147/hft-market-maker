@@ -8,6 +8,8 @@
 #include "trading/order_manager.h"
 #include "trading/risk_manager.h"
 #include "trading/volatility_tracker.h"
+#include "trading/avellaneda-stoikov-model.h"
+#include "trading/orderbook-imbalance-tracker.h"
 #include "core/logger.h"
 #include "quill/Logger.h"
 #include <memory>
@@ -41,6 +43,9 @@ private:
     std::shared_ptr<OrderManager> order_manager_;
     std::shared_ptr<RiskManager> risk_manager_;
     std::shared_ptr<VolatilityTracker> volatility_tracker_;
+    std::unique_ptr<AvellanedaStoikovModel> as_model_;  // Inventory-aware quoting
+    std::chrono::steady_clock::time_point as_horizon_start_;  // Rolling window start
+    std::unique_ptr<OrderBookImbalanceTracker> obi_tracker_;  // OBI spread tilting
     std::shared_ptr<Logger> logger_;
     quill::Logger* quill_logger_ = nullptr;
 

@@ -27,6 +27,9 @@ public:
     // Order management
     [[nodiscard]] bool place_market_maker_orders(double mid_price);
     [[nodiscard]] bool place_market_maker_orders(double mid_price, const std::chrono::steady_clock::time_point& orderbook_time);
+    // Place orders with explicit bid/ask prices (used by Avellaneda-Stoikov model)
+    [[nodiscard]] bool place_market_maker_orders_with_prices(double mid_price, double bid_price, double ask_price,
+                                                             const std::chrono::steady_clock::time_point& orderbook_time);
     // Single taker order (IOC limit or market)
     bool place_taker_order(OrderSide side, double price, double quantity,
                            const std::string& order_type = "ioc",

@@ -2,8 +2,8 @@
 
 ## Project Stats
 - **Language**: C++17
-- **Build**: CMake 3.14+ with FetchContent, two-target build (market_maker + momentum_taker)
-- **Source files**: 25 (.h) + 24 (.cpp)
+- **Build**: CMake 3.14+ with FetchContent, three-target build (market_maker + momentum_taker + backtest)
+- **Source files**: 32 (.h) + 28 (.cpp) [Phase B additions: 7 backtesting files, 3 strategy files]
 - **Dependencies**: OpenSSL, CURL, JsonCpp, Asio, WebSocket++, Quill v7.5.0
 
 ## File Map
@@ -47,17 +47,28 @@
 | `pnl_tracker.h/.cpp` | ~90 | Realized P&L, daily loss, drawdown, signed fees |
 | `volatility_tracker.h/.cpp` | ~90 | Rolling stddev (Welford), spread adjustment |
 | `rate_limiter.h/.cpp` | ~60 | Token bucket rate limiting |
+| `avellaneda-stoikov-model.h` | ~79 | Inventory-aware quoting: reservation price, optimal spread computation |
+| `orderbook-imbalance-tracker.h/.cpp` | ~43 | OBI detection: (bid_vol - ask_vol) / total_vol, EMA smoothing, spread tilting |
+| `vwap-tracker.h` | ~80 | Cumulative VWAP with Welford variance, rolling bands |
+
+### Backtesting (`include/backtesting/`, `src/backtesting/`)
+| File | Lines | Purpose |
+|------|-------|---------|
+| `backtest-engine.h/.cpp` | ~46 | Tick-level replay engine, strategy callback, CSV export |
+| `data-loader.h/.cpp` | ~50 | CSV tick parser: timestamp, OHLCV, L2 book (bids/asks) |
+| `simulated-exchange.h/.cpp` | ~180 | Simulated orderbook, order matching, latency simulation, fill tracking |
+| `performance-metrics.h` | ~100 | Sharpe ratio, max drawdown, win rate, trade stats |
 
 ## Build Command
 ```bash
 cmake -S . -B out -DCMAKE_BUILD_TYPE=Release
 cmake --build out -j$(nproc)
-# Produces: out/market_maker and out/momentum_taker
+# Produces: out/market_maker, out/momentum_taker, out/backtest
 ```
 
 ## Key Design Decisions
 
-1. **Two-target build**: Shared COMMON_SOURCES (16 files), separate main.cpp / momentum_main.cpp (market maker vs momentum taker)
+1. **Three-target build**: Shared COMMON_SOURCES (~26 files), separate main.cpp / momentum_main.cpp / backtest_main.cpp
 2. **Exchange abstraction via IExchange**: Allows adding new exchanges without modifying trading logic
 3. **Integrated user data stream**: WebSocket Trading API handles both order execution and user data (fill/balance events) on same connection via `userDataStream.subscribe.signature`
 4. **Real fills over approximation**: Receives actual fills from `executionReport` events instead of assuming fills on placement
@@ -71,14 +82,25 @@ cmake --build out -j$(nproc)
 12. **Named loggers per domain**: "trading", "network", "core", "risk" enable selective debugging and monitoring
 13. **EMA(400) momentum strategy**: Fast signal detection, epsilon-based thresholds, cooldown prevents over-trading
 14. **IOC limit orders**: Taker bot uses immediate-or-cancel orders for momentum execution with price protection
+15. **Avellaneda-Stoikov model**: Inventory-aware quoting adjusts spread and reservation price based on position and volatility
+16. **Order Book Imbalance (OBI)**: Detects directional pressure, tilts spread asymmetrically (compress bid if buy pressure, compress ask if sell pressure)
+17. **Dynamic position sizing**: Scales order size inversely with volatility (larger in calm, smaller in turbulent markets)
+18. **Multi-timeframe momentum**: Fast/slow EMA confirmation requires both to align before signal fires
+19. **Backtesting framework**: Tick-level replay via SimulatedExchange with realistic latency/slippage simulation
 
 ## Improvement History
 
 | Phase | Commit | Description |
 |-------|--------|-------------|
-| 01 | `fcfd2dc` | 10 critical bug fixes (atomics, race conditions, validation) |
-| 02 | `fb0eff7` | Security hardening across network layer |
-| 03 | `4f0d351` | Risk management framework (position, P&L, kill switch) |
-| 04 | `ff4c88d` | Trading logic (UserDataStream, volatility, VWAP, fill tracking) |
-| 05 | — | Documentation and final polish |
-| 06 | — | Migrate logging: std::cout/cerr → Quill v7.5.0 async logger (16 files) |
+| A1 | `fcfd2dc` | 10 critical bug fixes (atomics, race conditions, validation) |
+| A2 | `fb0eff7` | Security hardening across network layer |
+| A3 | `4f0d351` | Risk management framework (position, P&L, kill switch) |
+| A4 | `ff4c88d` | Trading logic (UserDataStream, volatility, VWAP, fill tracking) |
+| A5 | — | Documentation and final polish |
+| A6 | `92ceabd` | Migrate logging: std::cout/cerr → Quill v7.5.0 async logger (16 files) |
+| A7 | `d6514ad` | Momentum taker bot: EMA signal engine, IOC orders, latency tracking |
+| B1 | `d6514ad` | Avellaneda-Stoikov inventory-aware quoting model |
+| B2 | `d6514ad` | Multi-timeframe momentum: fast/slow EMA + VWAP tracker |
+| B3 | `d6514ad` | Order Book Imbalance detection + spread tilting |
+| B4 | `d6514ad` | Volatility-adjusted position sizing + dynamic limits |
+| B5 | `d6514ad` | Backtesting framework + data loader + performance metrics |

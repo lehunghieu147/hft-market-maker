@@ -41,36 +41,42 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         return false;
     }
 
-    auto start_time = std::chrono::steady_clock::now();
-    auto t1 = start_time;
-
-    // Pre-calculate prices before any network I/O
+    // Calculate spread-based bid/ask prices
     double spread_multiplier = config_.spread_percentage;
-    double bid_multiplier = 1.0 - spread_multiplier;
-    double ask_multiplier = 1.0 + spread_multiplier;
+    double bid_price = format_price(mid_price * (1.0 - spread_multiplier));
+    double ask_price = format_price(mid_price * (1.0 + spread_multiplier));
 
-    double bid_price_raw = mid_price * bid_multiplier;
-    double ask_price_raw = mid_price * ask_multiplier;
+    return place_market_maker_orders_with_prices(mid_price, bid_price, ask_price, orderbook_time);
+}
 
-    double bid_price = format_price(bid_price_raw);
-    double ask_price = format_price(ask_price_raw);
+bool OrderManager::place_market_maker_orders_with_prices(double mid_price, double bid_price, double ask_price,
+                                                          const std::chrono::steady_clock::time_point& orderbook_time) {
+    if (mid_price <= 0) {
+        LOG_ERROR(logger_, "Invalid mid price: {}", mid_price);
+        return false;
+    }
 
-    auto t2 = std::chrono::steady_clock::now();
-    auto calc_time = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+    auto start_time = std::chrono::steady_clock::now();
 
-    LOG_DEBUG(logger_, "PRICE_CALC mid={:.5f} spread={:.1f}% bid_raw={:.7f} bid={:.5f} "
-              "ask_raw={:.7f} ask={:.5f} calc_time={}us",
-              mid_price, spread_multiplier * 100, bid_price_raw, bid_price,
-              ask_price_raw, ask_price, calc_time);
+    bid_price = format_price(bid_price);
+    ask_price = format_price(ask_price);
 
-    // OPTIMIZATION: Check if price change is significant enough
+    // Compute effective order size (dynamic if risk manager supports it)
+    double order_size = config_.order_size;
+    if (risk_manager_ && config_.use_dynamic_sizing) {
+        order_size = format_quantity(risk_manager_->adjusted_order_size(
+            config_.order_size, config_.vol_sizing_exponent,
+            config_.min_size_multiplier, config_.max_size_multiplier));
+        LOG_DEBUG(logger_, "Dynamic sizing: base={} adjusted={}", config_.order_size, order_size);
+    }
+
+    // Check if price change is significant enough to update
     const double PRICE_CHANGE_THRESHOLD = 0.0001; // 0.01% minimum change
     bool need_update = false;
 
     {
         std::lock_guard<std::mutex> lock(orders_mutex_);
 
-        // Check if we need to update orders
         if (!active_bid_order_ || !active_ask_order_) {
             need_update = true;
             LOG_DEBUG(logger_, "{}", "No active orders, placing new ones");
@@ -100,7 +106,7 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
 
     // Order validation
     auto validation = order_validator_.validate_market_maker_orders(
-        bid_price, ask_price, config_.order_size, mid_price);
+        bid_price, ask_price, order_size, mid_price);
     if (!validation.is_valid) {
         LOG_ERROR(logger_, "Validation failed: {}", validation.error_message);
         return false;
@@ -108,16 +114,15 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
 
     // Position limit check (atomic pair check under single lock)
     if (risk_manager_) {
-        if (!risk_manager_->position_tracker().can_place_pair(config_.order_size, config_.order_size)) {
+        if (!risk_manager_->position_tracker().can_place_pair(order_size, order_size)) {
             LOG_ERROR(logger_, "{}", "Position limit would be exceeded");
             return false;
         }
     }
 
     LOG_INFO(logger_, "PLACING_ORDERS mid={:.5f} bid={:.5f} ask={:.5f} qty={}",
-             mid_price, bid_price, ask_price, config_.order_size);
+             mid_price, bid_price, ask_price, order_size);
 
-    // OPTIMIZATION: Try to modify existing orders first if they exist
     bool bid_success = false;
     bool ask_success = false;
 
@@ -132,7 +137,7 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         ask_order_to_cancel = active_ask_order_;
     }
 
-    // Cancel orders in parallel - handle each order independently
+    // Cancel orders in parallel
     std::vector<std::future<bool>> cancel_futures;
 
     if (bid_order_to_cancel) {
@@ -147,9 +152,7 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         }));
     }
 
-    // Wait for all cancellations with timeout (100ms max per cancel)
     constexpr auto timeout = std::chrono::milliseconds(100);
-
     for (size_t i = 0; i < cancel_futures.size(); ++i) {
         if (cancel_futures[i].wait_for(timeout) == std::future_status::ready) {
             cancel_futures[i].get();
@@ -158,50 +161,36 @@ bool OrderManager::place_market_maker_orders(double mid_price, const std::chrono
         }
     }
 
-    // Clear active orders after cancellation attempts
+    // Clear active orders after cancellation
     {
         std::lock_guard<std::mutex> lock(orders_mutex_);
-        if (bid_order_to_cancel) {
-            active_bid_order_.reset();
-        }
-        if (ask_order_to_cancel) {
-            active_ask_order_.reset();
-        }
+        if (bid_order_to_cancel) active_bid_order_.reset();
+        if (ask_order_to_cancel) active_ask_order_.reset();
     }
 
     auto t4 = std::chrono::steady_clock::now();
-    auto cancel_time = std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
-    LOG_DEBUG(logger_, "Cancel orders latency: {}us", cancel_time);
+    LOG_DEBUG(logger_, "Cancel orders latency: {}us",
+              std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count());
 
-    // OPTIMIZATION: Use threads instead of async to avoid overhead
+    // Place new orders in parallel threads
     auto t5 = std::chrono::steady_clock::now();
-    std::thread bid_thread([this, bid_price, &bid_success]() {
-        auto thread_start = std::chrono::steady_clock::now();
-        bid_success = place_order(OrderSide::BUY, bid_price, config_.order_size);
-        auto thread_end = std::chrono::steady_clock::now();
-        auto thread_time = std::chrono::duration_cast<std::chrono::microseconds>(thread_end - thread_start).count();
-        LOG_DEBUG(logger_, "BID order placement: {}us", thread_time);
+    std::thread bid_thread([this, bid_price, order_size, &bid_success]() {
+        bid_success = place_order(OrderSide::BUY, bid_price, order_size);
     });
 
-    std::thread ask_thread([this, ask_price, &ask_success]() {
-        auto thread_start = std::chrono::steady_clock::now();
-        ask_success = place_order(OrderSide::SELL, ask_price, config_.order_size);
-        auto thread_end = std::chrono::steady_clock::now();
-        auto thread_time = std::chrono::duration_cast<std::chrono::microseconds>(thread_end - thread_start).count();
-        LOG_DEBUG(logger_, "ASK order placement: {}us", thread_time);
+    std::thread ask_thread([this, ask_price, order_size, &ask_success]() {
+        ask_success = place_order(OrderSide::SELL, ask_price, order_size);
     });
 
-    // Wait for both threads
     bid_thread.join();
     ask_thread.join();
     auto t6 = std::chrono::steady_clock::now();
-    auto thread_time = std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count();
-    LOG_DEBUG(logger_, "Total thread execution: {}us", thread_time);
+    LOG_DEBUG(logger_, "Total thread execution: {}us",
+              std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count());
 
     last_mid_price_ = mid_price;
     last_order_update_ = std::chrono::steady_clock::now();
 
-    // Display order placement summary
     if (bid_success && ask_success) {
         LOG_INFO(logger_, "{}", "BOTH ORDERS PLACED SUCCESSFULLY");
     } else if (bid_success || ask_success) {
