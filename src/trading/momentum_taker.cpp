@@ -45,24 +45,15 @@ bool MomentumTakerBot::initialize() {
     // Initialize latency tracker
     latency_tracker_ = std::make_unique<LatencyTracker>();
 
-    // Initialize User Data Stream for fill tracking
-    user_data_stream_ = std::make_unique<UserDataStream>(
-        config_.api_key, config_.api_secret,
-        config_.rest_base_url, config_.ws_base_url);
-
-    user_data_stream_->set_fill_callback(
+    // Wire fill callback through exchange's WS trading connection
+    exchange_->set_fill_callback(
         [this](const std::string& order_id, const std::string& client_order_id,
                OrderSide side, OrderStatus status,
                double price, double qty, double cum_qty) {
             order_manager_->on_fill_event(order_id, client_order_id,
                                           side, status, price, qty, cum_qty);
         });
-
-    if (!user_data_stream_->start()) {
-        LOG_WARNING(quill_logger_, "{}", "User Data Stream failed to start - position tracking unavailable");
-    } else {
-        LOG_INFO(quill_logger_, "{}", "User Data Stream connected");
-    }
+    LOG_INFO(quill_logger_, "{}", "User data stream callbacks wired via WS trading connection");
 
     initialized_ = true;
     LOG_INFO(quill_logger_, "Momentum Taker Bot initialized: symbol={} epsilon={} ema_window={} order_size={}",
@@ -144,10 +135,6 @@ void MomentumTakerBot::stop() {
 
         LOG_INFO(quill_logger_, "{}", "Stopping Momentum Taker Bot...");
         running_ = false;
-
-        if (user_data_stream_) {
-            user_data_stream_->stop();
-        }
 
         signal_cv_.notify_all();
 

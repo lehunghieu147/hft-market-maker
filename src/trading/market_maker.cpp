@@ -54,26 +54,15 @@ bool MarketMakerBot::initialize() {
     volatility_tracker_ = std::make_shared<VolatilityTracker>(100, 0.001, 0.05);
     logger_->log(LogLevel::INFO, "Volatility tracker initialized");
 
-    // Initialize User Data Stream for real fill tracking
-    user_data_stream_ = std::make_unique<UserDataStream>(
-        config_.api_key, config_.api_secret,
-        config_.rest_base_url, config_.ws_base_url);
-
-    // Wire fill callback to OrderManager
-    user_data_stream_->set_fill_callback(
+    // Wire fill callback through exchange's WS trading connection
+    exchange_->set_fill_callback(
         [this](const std::string& order_id, const std::string& client_order_id,
                OrderSide side, OrderStatus status,
                double price, double qty, double cum_qty) {
             order_manager_->on_fill_event(order_id, client_order_id,
                                           side, status, price, qty, cum_qty);
         });
-
-    if (!user_data_stream_->start()) {
-        logger_->log(LogLevel::WARNING, "User Data Stream failed to start - "
-                     "position tracking will be unavailable");
-    } else {
-        logger_->log(LogLevel::INFO, "User Data Stream connected");
-    }
+    logger_->log(LogLevel::INFO, "User data stream callbacks wired via WS trading connection");
 
     initialized_ = true;
     logger_->log(LogLevel::INFO, "Market Maker Bot V2 initialized successfully");
@@ -158,11 +147,6 @@ void MarketMakerBot::run() {
 void MarketMakerBot::stop() {
     logger_->log(LogLevel::INFO, "Stopping Market Maker Bot V2...");
     running_ = false;
-
-    // Stop User Data Stream first
-    if (user_data_stream_) {
-        user_data_stream_->stop();
-    }
 
     // Notify condition variable to wake up main loop
     price_change_cv_.notify_all();

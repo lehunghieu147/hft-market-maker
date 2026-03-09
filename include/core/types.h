@@ -5,6 +5,7 @@
 #include <chrono>
 #include <vector>
 #include <memory>
+#include <functional>
 
 namespace MarketMaker {
 
@@ -103,6 +104,23 @@ struct Order {
     std::chrono::steady_clock::time_point created_time;
     std::chrono::steady_clock::time_point updated_time;
 };
+
+// Callback types for user data stream events (fills, balance updates)
+using FillCallback = std::function<void(
+    const std::string& order_id,
+    const std::string& client_order_id,
+    OrderSide side,
+    OrderStatus status,
+    double price,
+    double quantity,
+    double cumulative_quantity
+)>;
+
+using BalanceCallback = std::function<void(
+    const std::string& asset,
+    double free_balance,
+    double locked_balance
+)>;
 
 struct MarketData {
     std::string symbol;

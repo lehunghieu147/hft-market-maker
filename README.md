@@ -30,11 +30,11 @@ This market maker bot implements a complete trading system with:
           +------------------+------------------+
           |                  |                  |
 +---------v------+  +--------v--------+  +-----v-----------+
-| OrderManager   |  | RiskManager     |  | UserDataStream  |
-| - place orders |  | - kill switch   |  | - real fills    |
-| - cancel/replace| | - error tracking|  | - balance events|
-| - fill events  |  +--------+--------+  +-----------------+
-+----------------+           |
+| OrderManager   |  | RiskManager     |  | WS Trading API  |
+| - place orders |  | - kill switch   |  | - user data sub |
+| - cancel/replace| | - error tracking|  | - real fills    |
+| - fill events  |  +--------+--------+  | - balance events|
++----------------+           |            +-----------------+
                     +--------+--------+
                     |                 |
               +-----v-----+   +------v------+
@@ -57,10 +57,9 @@ This market maker bot implements a complete trading system with:
 | PositionTracker | `trading/position_tracker` | Net position tracking with configurable limits |
 | PnLTracker | `trading/pnl_tracker` | Realized P&L, daily loss, drawdown, fee tracking |
 | VolatilityTracker | `trading/volatility_tracker` | Rolling stddev via Welford's algorithm |
-| UserDataStream | `network/user_data_stream` | Binance User Data Stream for real-time fills |
+| WebSocketTradingClient | `network/websocket_trading_client` | Order execution + user data stream (single WS connection) |
 | RateLimiter | `trading/rate_limiter` | Exchange rate limit compliance |
 | WebSocketClient | `network/websocket_client` | Market data WebSocket |
-| WebSocketTradingClient | `network/websocket_trading_client` | Order execution WebSocket |
 | RestClient | `network/rest_client` | REST API with connection pooling |
 
 ### Directory Structure
@@ -98,11 +97,13 @@ config/            # JSON configuration files
 - **Stale data rejection**: Reject orderbook updates older than 5 seconds
 
 ### Real-Time Fill Tracking
-- **Binance User Data Stream**: WebSocket connection for `executionReport` events
-- **Accurate position tracking**: Based on real fills, not placement assumptions
+- **Binance WS API User Data**: Integrated on same WebSocket connection as order execution
+- **Method**: `userDataStream.subscribe.signature` with HMAC-SHA256 authentication
+- **Accurate position tracking**: Based on real fills from `executionReport` events
 - **Partial fill handling**: Tracks cumulative fill quantities
 - **Balance monitoring**: Real-time `outboundAccountPosition` events
-- **Listen key management**: Auto-create, 30-min keepalive, cleanup on stop
+- **Automatic keepalive**: WS-level ping/pong (every 20s) maintains subscription
+- **No separate connection**: User data events share the trading WebSocket (wss://ws-api.binance.com:443)
 
 ### Order Safety
 - **Order validation**: Price, quantity, spread sanity checks before placement

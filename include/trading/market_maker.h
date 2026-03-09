@@ -7,7 +7,6 @@
 #include "trading/order_manager.h"
 #include "trading/risk_manager.h"
 #include "trading/volatility_tracker.h"
-#include "network/user_data_stream.h"
 #include "core/logger.h"
 #include "quill/Logger.h"
 #include <memory>
@@ -41,7 +40,6 @@ private:
     std::shared_ptr<OrderManager> order_manager_;
     std::shared_ptr<RiskManager> risk_manager_;
     std::shared_ptr<VolatilityTracker> volatility_tracker_;
-    std::unique_ptr<UserDataStream> user_data_stream_;
     std::shared_ptr<Logger> logger_;
     quill::Logger* quill_logger_ = nullptr;
 

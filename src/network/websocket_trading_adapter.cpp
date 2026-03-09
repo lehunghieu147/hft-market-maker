@@ -81,6 +81,10 @@ bool WebSocketTradingAdapter::connect() {
             );
             ws_trading_client_->enable_auto_reconnect(true);
 
+            // Re-apply user data stream callbacks (auto-subscribes on connect)
+            if (fill_callback_) ws_trading_client_->set_fill_callback(fill_callback_);
+            if (balance_callback_) ws_trading_client_->set_balance_callback(balance_callback_);
+
             std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms * attempt));
         }
 
@@ -333,6 +337,20 @@ void WebSocketTradingAdapter::set_orderbook_handler(OrderbookHandler handler) {
 
 void WebSocketTradingAdapter::set_message_handler(MessageHandler handler) {
     message_handler_ = handler;
+}
+
+void WebSocketTradingAdapter::set_fill_callback(FillCallback callback) {
+    fill_callback_ = callback;  // Store for reconnect
+    if (ws_trading_client_) {
+        ws_trading_client_->set_fill_callback(std::move(callback));
+    }
+}
+
+void WebSocketTradingAdapter::set_balance_callback(BalanceCallback callback) {
+    balance_callback_ = callback;  // Store for reconnect
+    if (ws_trading_client_) {
+        ws_trading_client_->set_balance_callback(std::move(callback));
+    }
 }
 
 void WebSocketTradingAdapter::set_connection_handler(ConnectionHandler handler) {

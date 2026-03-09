@@ -96,6 +96,10 @@ public:
     void set_message_handler(MessageHandler handler) override;
     void set_connection_handler(ConnectionHandler handler) override;
 
+    // User data stream (routed through trading WS connection)
+    void set_fill_callback(FillCallback callback) override;
+    void set_balance_callback(BalanceCallback callback) override;
+
     // Utility methods
     bool get_symbol_info(
         const std::string& symbol,
@@ -154,6 +158,10 @@ private:
     OrderbookHandler orderbook_handler_;
     MessageHandler message_handler_;
     ConnectionHandler connection_handler_;
+
+    // Stored user data callbacks (re-applied on reconnect)
+    FillCallback fill_callback_;
+    BalanceCallback balance_callback_;
 
     // Helper methods
     Order json_to_order(const Json::Value& json_order);

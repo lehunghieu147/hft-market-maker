@@ -29,9 +29,8 @@
 |------|-------|---------|
 | `rest_client.h/.cpp` | ~340 | CURL-based REST client, HMAC signing, connection pool, market/IOC order support |
 | `websocket_client.h/.cpp` | ~350 | Market data WebSocket (orderbook streaming) |
-| `websocket_trading_client.h/.cpp` | ~300 | Order execution via Binance WS API v3 |
+| `websocket_trading_client.h/.cpp` | ~420 | Order execution + user data stream via Binance WS API v3; `userDataStream.subscribe.signature` |
 | `websocket_trading_adapter.h/.cpp` | ~200 | Adapter bridging WS trading to IExchange |
-| `user_data_stream.h/.cpp` | ~400 | Binance User Data Stream (fills, balances) |
 
 ### Trading (`include/trading/`, `src/trading/`)
 | File | Lines | Purpose |
@@ -60,17 +59,18 @@ cmake --build out -j$(nproc)
 
 1. **Two-target build**: Shared COMMON_SOURCES (16 files), separate main.cpp / momentum_main.cpp (market maker vs momentum taker)
 2. **Exchange abstraction via IExchange**: Allows adding new exchanges without modifying trading logic
-3. **Real fills over approximation**: UserDataStream tracks actual fills instead of assuming fills on placement
-4. **Welford's algorithm**: Numerically stable variance calculation for high-priced assets (avoids catastrophic cancellation)
-5. **VWAP mid price**: Volume-weighted mid from top N orderbook levels provides better price signal than simple mid
-6. **Atomic pair position check**: `can_place_pair()` checks both bid+ask position impact under single lock (TOCTOU fix)
-7. **Signed fee rates**: Maker fee can be negative (rebate), correctly reduces trading cost
-8. **Thread join before SSL free**: Prevents use-after-free in UserDataStream cleanup
-9. **SSL certificate verification**: VERIFY_PEER enabled for User Data Stream connections
-10. **Quill async logger**: Lock-free ring buffer provides ~1-5µs log latency vs ~10-50µs for std::cout, zero blocking on call-site
-11. **Named loggers per domain**: "trading", "network", "core", "risk" enable selective debugging and monitoring
-12. **EMA(400) momentum strategy**: Fast signal detection, epsilon-based thresholds, cooldown prevents over-trading
-13. **IOC limit orders**: Taker bot uses immediate-or-cancel orders for momentum execution with price protection
+3. **Integrated user data stream**: WebSocket Trading API handles both order execution and user data (fill/balance events) on same connection via `userDataStream.subscribe.signature`
+4. **Real fills over approximation**: Receives actual fills from `executionReport` events instead of assuming fills on placement
+5. **No separate keepalive thread**: WS-level ping/pong (every 20s) maintains user data subscription automatically
+6. **Welford's algorithm**: Numerically stable variance calculation for high-priced assets (avoids catastrophic cancellation)
+7. **VWAP mid price**: Volume-weighted mid from top N orderbook levels provides better price signal than simple mid
+8. **Atomic pair position check**: `can_place_pair()` checks both bid+ask position impact under single lock (TOCTOU fix)
+9. **Signed fee rates**: Maker fee can be negative (rebate), correctly reduces trading cost
+10. **SSL certificate verification**: VERIFY_PEER enabled for WebSocket Trading API connections
+11. **Quill async logger**: Lock-free ring buffer provides ~1-5µs log latency vs ~10-50µs for std::cout, zero blocking on call-site
+12. **Named loggers per domain**: "trading", "network", "core", "risk" enable selective debugging and monitoring
+13. **EMA(400) momentum strategy**: Fast signal detection, epsilon-based thresholds, cooldown prevents over-trading
+14. **IOC limit orders**: Taker bot uses immediate-or-cancel orders for momentum execution with price protection
 
 ## Improvement History
 

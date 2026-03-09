@@ -232,6 +232,16 @@ void WebSocketTradingClient::on_open([[maybe_unused]] websocketpp::connection_hd
     LOG_INFO(get_logger(), "{}", "WebSocket Trading connection opened");
     connected_ = true;
 
+    // Auto-subscribe to user data stream if callbacks are set
+    // Must dispatch to separate thread — send_request_and_wait blocks, and
+    // on_open runs on the ASIO event loop thread that delivers responses
+    {
+        std::lock_guard<std::mutex> lock(user_data_mutex_);
+        if (fill_callback_ || balance_callback_) {
+            std::thread([this]() { subscribe_user_data_stream(); }).detach();
+        }
+    }
+
     if (connection_handler_) {
         connection_handler_(true);
     }
@@ -265,6 +275,12 @@ void WebSocketTradingClient::process_message(const std::string& message) {
 
     if (!reader.parse(message, response)) {
         LOG_ERROR(get_logger(), "Failed to parse WebSocket message: {}", message.substr(0, 200));
+        return;
+    }
+
+    // User data stream events: no "id" field, wrapped in {"event": {...}, "subscriptionId": N}
+    if (!response.isMember("id") && response.isMember("event")) {
+        handle_user_data_event(response["event"]);
         return;
     }
 
@@ -638,6 +654,101 @@ std::string WebSocketTradingClient::format_quantity(double quantity, int precisi
     std::stringstream ss;
     ss << std::fixed << std::setprecision(precision) << quantity;
     return ss.str();
+}
+
+void WebSocketTradingClient::set_fill_callback(FillCallback callback) {
+    std::lock_guard<std::mutex> lock(user_data_mutex_);
+    fill_callback_ = std::move(callback);
+}
+
+void WebSocketTradingClient::set_balance_callback(BalanceCallback callback) {
+    std::lock_guard<std::mutex> lock(user_data_mutex_);
+    balance_callback_ = std::move(callback);
+}
+
+bool WebSocketTradingClient::subscribe_user_data_stream() {
+    if (!connected_) {
+        LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Cannot subscribe - not connected");
+        return false;
+    }
+
+    // Use userDataStream.subscribe.signature (supports HMAC-SHA256)
+    Json::Value params;
+    auto response = send_request_and_wait("userDataStream.subscribe.signature", params);
+
+    if (!response) {
+        LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Subscribe request failed/timed out");
+        return false;
+    }
+
+    if (response->isMember("error")) {
+        const auto& error = (*response)["error"];
+        LOG_ERROR(get_logger(), "[USER_STREAM] Subscribe error - code: {} msg: {}",
+                  error["code"].asInt(), error["msg"].asString());
+        return false;
+    }
+
+    LOG_INFO(get_logger(), "{}", "[USER_STREAM] Subscribed to user data stream via WS API");
+    return true;
+}
+
+void WebSocketTradingClient::handle_user_data_event(const Json::Value& event) {
+    std::string event_type = event.get("e", "").asString();
+
+    if (event_type == "executionReport") {
+        std::string order_id = event.isMember("i")
+            ? std::to_string(event["i"].asInt64()) : "";
+        std::string client_order_id = event.get("c", "").asString();
+        std::string side_str = event.get("S", "").asString();
+        std::string status_str = event.get("X", "").asString();
+
+        double price = 0.0, qty = 0.0, cum_qty = 0.0;
+        try {
+            price = std::stod(event.get("L", "0").asString());
+            qty = std::stod(event.get("l", "0").asString());
+            cum_qty = std::stod(event.get("z", "0").asString());
+        } catch (const std::exception& e) {
+            LOG_ERROR(get_logger(), "[USER_STREAM] Failed to parse fill data: {}", e.what());
+            return;
+        }
+
+        OrderSide side = (side_str == "BUY") ? OrderSide::BUY : OrderSide::SELL;
+
+        OrderStatus status = OrderStatus::NEW;
+        if (status_str == "FILLED") status = OrderStatus::FILLED;
+        else if (status_str == "PARTIALLY_FILLED") status = OrderStatus::PARTIALLY_FILLED;
+        else if (status_str == "CANCELED") status = OrderStatus::CANCELED;
+        else if (status_str == "REJECTED") status = OrderStatus::REJECTED;
+        else if (status_str == "EXPIRED") status = OrderStatus::EXPIRED;
+
+        LOG_INFO(get_logger(), "[USER_STREAM] ExecutionReport: {} {} price={} qty={} cum_qty={}",
+                 side_str, status_str, price, qty, cum_qty);
+
+        // Copy-then-invoke to avoid holding lock during callback (prevents lock inversion)
+        FillCallback cb;
+        { std::lock_guard<std::mutex> lock(user_data_mutex_); cb = fill_callback_; }
+        if (cb) {
+            cb(order_id, client_order_id, side, status, price, qty, cum_qty);
+        }
+    } else if (event_type == "outboundAccountPosition") {
+        auto balances = event["B"];
+        if (balances.isArray()) {
+            BalanceCallback cb;
+            { std::lock_guard<std::mutex> lock(user_data_mutex_); cb = balance_callback_; }
+            if (!cb) return;
+            for (const auto& bal : balances) {
+                std::string asset = bal.get("a", "").asString();
+                double free_bal = 0.0, locked_bal = 0.0;
+                try {
+                    free_bal = std::stod(bal.get("f", "0").asString());
+                    locked_bal = std::stod(bal.get("l", "0").asString());
+                } catch (...) {
+                    continue;
+                }
+                cb(asset, free_bal, locked_bal);
+            }
+        }
+    }
 }
 
 } // namespace MarketMaker

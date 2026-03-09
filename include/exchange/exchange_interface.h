@@ -120,6 +120,10 @@ public:
     virtual void set_message_handler(MessageHandler handler) = 0;
     virtual void set_connection_handler(ConnectionHandler handler) = 0;
 
+    // ========== User Data Stream ==========
+    virtual void set_fill_callback(FillCallback callback) { (void)callback; }
+    virtual void set_balance_callback(BalanceCallback callback) { (void)callback; }
+
     // ========== Utility Methods ==========
     virtual std::string get_exchange_name() const = 0;
     virtual bool supports_websocket_trading() const = 0;

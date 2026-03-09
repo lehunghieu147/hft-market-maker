@@ -8,7 +8,6 @@
 #include "trading/risk_manager.h"
 #include "trading/signal_engine.h"
 #include "trading/latency_tracker.h"
-#include "network/user_data_stream.h"
 #include "quill/Logger.h"
 #include <memory>
 #include <atomic>
@@ -39,7 +38,6 @@ private:
     std::shared_ptr<RiskManager> risk_manager_;
     std::unique_ptr<SignalEngine> signal_engine_;
     std::unique_ptr<LatencyTracker> latency_tracker_;
-    std::unique_ptr<UserDataStream> user_data_stream_;
     quill::Logger* quill_logger_ = nullptr;
 
     // State

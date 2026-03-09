@@ -17,13 +17,13 @@ C++17 HFT trading system for Binance with multi-exchange abstraction. Contains t
 │  - volatility feed to VolatilityTracker                     │
 ├──────────┬──────────┬──────────────┬────────────────────────┤
 │          │          │              │                        │
-│  Order   │  Risk    │  Volatility  │  User Data Stream     │
-│  Manager │  Manager │  Tracker     │  (Binance WebSocket)  │
+│  Order   │  Risk    │  Volatility  │  WebSocket Trading API │
+│  Manager │  Manager │  Tracker     │  (Order + User Data)  │
 │          │          │              │                        │
 │  ┌───────┤  ┌───────┤  Welford's   │  executionReport →    │
 │  │Validator  │Position  online alg  │  on_fill_event()     │
 │  │       │  │Tracker │              │  outboundAccountPos  │
-│  │       │  │       │              │  listen key keepalive │
+│  │       │  │       │              │  WS ping/pong (20s)   │
 │  │       │  ├───────┤              │                        │
 │  │       │  │PnL    │              │                        │
 │  │       │  │Tracker│              │                        │
@@ -37,13 +37,13 @@ C++17 HFT trading system for Binance with multi-exchange abstraction. Contains t
 │  - Cooldown enforcement (prevents over-trading)             │
 ├──────────┬──────────┬──────────────┬────────────────────────┤
 │          │          │              │                        │
-│  Signal  │  Order   │  Risk        │  User Data Stream     │
-│  Engine  │  Manager │  Manager     │  (Binance WebSocket)  │
+│  Signal  │  Order   │  Risk        │  WebSocket Trading API │
+│  Engine  │  Manager │  Manager     │  (Order + User Data)  │
 │          │          │              │                        │
 │  ┌───────┤  place_  │  ┌───────┐   │  executionReport →    │
 │  │EMA(400)  taker_  │  │Position│  │  on_fill_event()     │
 │  │       │  order() │  │Tracker │  │  outboundAccountPos  │
-│  │epsilon│          │  ├───────┤   │  listen key keepalive │
+│  │epsilon│          │  ├───────┤   │  WS ping/pong (20s)   │
 │  │cooldown          │  │PnL    │   │                        │
 │  │       │          │  │Tracker│   │                        │
 │  │Latency│          │  │       │   │                        │
@@ -65,9 +65,9 @@ C++17 HFT trading system for Binance with multi-exchange abstraction. Contains t
 │  ExchangeFactory::create("binance") → BinanceExchange       │
 ├──────────┬──────────┬───────────────────────────────────────┤
 │ RestClient│ WS Client│ WS Trading Client                    │
-│ (CURL)   │(market)  │ (orders via WS API)                  │
+│ (CURL)   │(market)  │ (orders + user data via WS API)      │
 │ HMAC-256 │ RFC 6455 │ HMAC-SHA256 per request              │
-│ Market/  │          │ IOC support                          │
+│ Market/  │          │ IOC support + fill/balance events    │
 │ IOC      │          │                                       │
 └──────────┴──────────┴───────────────────────────────────────┘
 ```
@@ -84,8 +84,9 @@ C++17 HFT trading system for Binance with multi-exchange abstraction. Contains t
 7. Position check: `can_place_pair()` under single lock
 8. Cancel existing orders (parallel async)
 9. Place new BID/ASK orders (parallel threads)
-10. UserDataStream receives `executionReport` → `on_fill_event()`
+10. WebSocket Trading API receives `executionReport` event → `on_fill_event()`
 11. Position/PnL trackers updated from real fill data
+12. WS-level ping/pong (every 20s) maintains user data subscription
 
 ### Momentum Strategy Signal Flow
 1. WebSocket receives orderbook update → `handle_orderbook_update()`
@@ -101,7 +102,7 @@ C++17 HFT trading system for Binance with multi-exchange abstraction. Contains t
 6. Risk gate: `should_trade()` checks position, P&L limits
 7. Place IOC limit order via `OrderManager::place_taker_order()`
 8. Record latency: signal detection → order placement time
-9. UserDataStream receives fill → update position/PnL trackers
+9. WebSocket Trading API receives `executionReport` event → update position/PnL trackers
 
 ### Threading Model
 | Thread | Purpose |
@@ -109,9 +110,7 @@ C++17 HFT trading system for Binance with multi-exchange abstraction. Contains t
 | Main thread | Bot initialization, signal handling |
 | `main_thread_` | Trading loop (market maker: price change → order update; momentum: signal → order exec) |
 | WebSocket thread | Market data reception (orderbook) |
-| WS Trading thread | Order execution responses |
-| `stream_thread_` | User Data Stream (fill events) |
-| `keepalive_thread_` | Listen key keepalive (30 min interval) |
+| WS Trading thread | Order execution responses + user data events (single connection) |
 | Async cancel/place | `std::thread` for parallel order ops (market maker only) |
 
 ### Synchronization

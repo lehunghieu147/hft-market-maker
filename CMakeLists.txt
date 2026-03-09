@@ -84,7 +84,6 @@ set(COMMON_SOURCES
     src/network/websocket_client.cpp
     src/network/websocket_trading_client.cpp
     src/network/websocket_trading_adapter.cpp
-    src/network/user_data_stream.cpp
     # Trading (shared)
     src/trading/order_manager.cpp
     src/trading/order_validator.cpp

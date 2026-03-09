@@ -90,6 +90,13 @@ public:
         error_handler_ = handler;
     }
 
+    // User data stream callbacks
+    void set_fill_callback(FillCallback callback);
+    void set_balance_callback(BalanceCallback callback);
+
+    // Subscribe to user data stream on this connection
+    bool subscribe_user_data_stream();
+
     // Metrics
     struct TradingMetrics {
         std::atomic<uint64_t> total_requests{0};
@@ -137,6 +144,11 @@ private:
     ConnectionHandler connection_handler_;
     ErrorHandler error_handler_;
 
+    // User data stream callbacks
+    FillCallback fill_callback_;
+    BalanceCallback balance_callback_;
+    std::mutex user_data_mutex_;
+
     // Metrics
     mutable TradingMetrics metrics_;
 
@@ -158,6 +170,7 @@ private:
     void process_message(const std::string& message);
     void handle_order_response(const Json::Value& response);
     void handle_error_response(const Json::Value& response);
+    void handle_user_data_event(const Json::Value& event);
 
     // Request management
     std::string generate_request_id();
