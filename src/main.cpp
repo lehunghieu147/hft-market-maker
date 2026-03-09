@@ -173,6 +173,8 @@ int main(int argc, char* argv[]) {
                 gcp_storage = std::make_unique<GcpStorageClient>(
                     *gcp_auth, config.gcp.gcs_bucket);
                 LOG_INFO(logger, "GCP integration enabled (project: {})", config.gcp.project_id);
+                // Wire publisher into bot for trading event streaming
+                bot->set_publisher(gcp_publisher.get());
             }
         }
 

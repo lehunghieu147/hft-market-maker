@@ -10,6 +10,7 @@
 #include "trading/volatility_tracker.h"
 #include "trading/avellaneda-stoikov-model.h"
 #include "trading/orderbook-imbalance-tracker.h"
+#include "cloud/gcp_publisher.h"
 #include "core/logger.h"
 #include "quill/Logger.h"
 #include <memory>
@@ -60,7 +61,13 @@ public:
     }
     void activate_kill_switch(const std::string& reason);
 
+    // GCP event publishing (optional, non-owning)
+    void set_publisher(GcpPublisher* pub) { publisher_ = pub; }
+
 private:
+    // Publish JSON event to GCP Pub/Sub (no-op if publisher not set)
+    void publish_event(const std::string& event_type, const std::string& payload);
+
     Config config_;
 
     // Core components - now using exchange interface
@@ -73,6 +80,7 @@ private:
     std::unique_ptr<OrderBookImbalanceTracker> obi_tracker_;  // OBI spread tilting
     std::shared_ptr<Logger> logger_;
     quill::Logger* quill_logger_ = nullptr;
+    GcpPublisher* publisher_ = nullptr;  // non-owning, optional
 
     // State
     std::atomic<bool> running_{false};

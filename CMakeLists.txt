@@ -198,6 +198,8 @@ if(BUILD_GRPC)
     set(gRPC_BUILD_GRPC_PHP_PLUGIN OFF CACHE BOOL "")
     set(gRPC_BUILD_GRPC_PYTHON_PLUGIN OFF CACHE BOOL "")
     set(gRPC_BUILD_GRPC_RUBY_PLUGIN OFF CACHE BOOL "")
+    # Use system OpenSSL instead of bundled BoringSSL to avoid symbol conflicts
+    set(gRPC_SSL_PROVIDER "package" CACHE STRING "")
 
     FetchContent_Declare(
         gRPC

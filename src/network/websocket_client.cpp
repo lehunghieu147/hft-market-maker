@@ -39,7 +39,11 @@ public:
         // Create SSL context
         ssl_ctx = SSL_CTX_new(TLS_client_method());
         if (!ssl_ctx) {
-            LOG_ERROR(get_logger(), "{}", "Failed to create SSL context");
+            unsigned long err = ERR_get_error();
+            char err_buf[256];
+            ERR_error_string_n(err, err_buf, sizeof(err_buf));
+            LOG_ERROR(get_logger(), "Failed to create SSL context: {}", err_buf);
+            return;
         }
 
         SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);

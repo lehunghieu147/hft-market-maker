@@ -3,6 +3,7 @@
 #include "exchange/exchange_interface.h"
 #include "core/app_logger.h"
 #include "core/metrics_collector.h"
+#include <json/json.h>
 #include <chrono>
 
 namespace MarketMaker {
@@ -89,6 +90,16 @@ bool MarketMakerBot::initialize() {
                    double price, double qty, double cum_qty) {
                 order_manager_->on_fill_event(order_id, client_order_id,
                                               side, status, price, qty, cum_qty);
+                // Publish fill event to GCP Pub/Sub
+                Json::Value d;
+                d["order_id"] = order_id;
+                d["side"] = (side == OrderSide::BUY) ? "BUY" : "SELL";
+                d["status"] = static_cast<int>(status);
+                d["price"] = price;
+                d["qty"] = qty;
+                d["cum_qty"] = cum_qty;
+                Json::FastWriter w;
+                publish_event("fill", w.write(d));
             });
         logger_->log(LogLevel::INFO, "User data stream wired via WS trading connection");
     } else {
@@ -351,8 +362,10 @@ void MarketMakerBot::handle_orderbook_update(const OrderBook& orderbook) {
 void MarketMakerBot::handle_connection_status(bool connected) {
     if (connected) {
         logger_->log(LogLevel::INFO, "Connected to " + config_.exchange_type + " exchange");
+        publish_event("connection", R"({"status":"connected"})");
     } else {
         logger_->log(LogLevel::WARNING, "Disconnected from " + config_.exchange_type + " exchange");
+        publish_event("connection", R"({"status":"disconnected"})");
     }
 }
 
@@ -410,6 +423,23 @@ void MarketMakerBot::print_status() {
              metrics.avg_order_latency_ms, metrics.min_order_latency_ms, metrics.max_order_latency_ms,
              metrics.avg_reaction_latency_ms, metrics.min_reaction_latency_ms, metrics.max_reaction_latency_ms,
              metrics.reconnect_count, metrics.get_uptime_percentage());
+
+    // Publish status snapshot to GCP Pub/Sub
+    {
+        Json::Value d;
+        d["mid_price"] = current_mid_price_.load();
+        d["total_orders"] = static_cast<Json::UInt64>(metrics.total_orders);
+        d["success_rate"] = metrics.get_success_rate();
+        d["avg_latency_ms"] = metrics.avg_order_latency_ms;
+        if (risk_manager_) {
+            d["position"] = risk_manager_->position_tracker().get_position();
+            d["daily_pnl"] = risk_manager_->pnl_tracker().get_daily_pnl();
+            d["total_pnl"] = risk_manager_->pnl_tracker().get_realized_pnl();
+            d["kill_switch"] = risk_manager_->is_kill_switch_active();
+        }
+        Json::FastWriter w;
+        publish_event("status", w.write(d));
+    }
 
     // Update Prometheus gauges
     auto& mc = MetricsCollector::instance();
@@ -489,6 +519,31 @@ std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>> MarketMakerBot::get_ac
 
 void MarketMakerBot::activate_kill_switch(const std::string& reason) {
     if (risk_manager_) risk_manager_->activate_kill_switch(reason);
+}
+
+void MarketMakerBot::publish_event(const std::string& event_type, const std::string& payload) {
+    if (!publisher_) return;
+
+    Json::Value root;
+    root["type"] = event_type;
+    root["symbol"] = config_.symbol;
+    root["timestamp_ms"] = static_cast<Json::Int64>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    // Parse payload into the event
+    Json::Value data;
+    Json::Reader reader;
+    if (reader.parse(payload, data)) {
+        root["data"] = data;
+    } else {
+        root["data"] = payload;
+    }
+
+    Json::FastWriter writer;
+    std::string json = writer.write(root);
+    if (!json.empty() && json.back() == '\n') json.pop_back();
+    publisher_->publish(json);
 }
 
 } // namespace MarketMaker
