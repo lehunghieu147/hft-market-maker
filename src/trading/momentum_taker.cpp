@@ -46,14 +46,18 @@ bool MomentumTakerBot::initialize() {
     latency_tracker_ = std::make_unique<LatencyTracker>();
 
     // Wire fill callback through exchange's WS trading connection
-    exchange_->set_fill_callback(
-        [this](const std::string& order_id, const std::string& client_order_id,
-               OrderSide side, OrderStatus status,
-               double price, double qty, double cum_qty) {
-            order_manager_->on_fill_event(order_id, client_order_id,
-                                          side, status, price, qty, cum_qty);
-        });
-    LOG_INFO(quill_logger_, "{}", "User data stream callbacks wired via WS trading connection");
+    if (exchange_->supports_websocket_trading()) {
+        exchange_->set_fill_callback(
+            [this](const std::string& order_id, const std::string& client_order_id,
+                   OrderSide side, OrderStatus status,
+                   double price, double qty, double cum_qty) {
+                order_manager_->on_fill_event(order_id, client_order_id,
+                                              side, status, price, qty, cum_qty);
+            });
+        LOG_INFO(quill_logger_, "{}", "User data stream wired via WS trading connection");
+    } else {
+        LOG_WARNING(quill_logger_, "{}", "Fill tracking unavailable: set use_websocket_trading=true to enable");
+    }
 
     initialized_ = true;
     LOG_INFO(quill_logger_, "Momentum Taker Bot initialized: symbol={} epsilon={} ema_window={} order_size={}",
@@ -230,7 +234,7 @@ void MomentumTakerBot::execute_signal(const SignalState& state) {
     double ema = signal_engine_->ema_value();
     double signal_edge = std::abs(mid - ema);
     double cost = spread + (config_.taker_fee_rate * mid);
-    double min_profit = config_.momentum.min_profit_bps * mid;
+    double min_profit = (config_.momentum.min_profit_bps / 10000.0) * mid;
 
     if (signal_edge < cost + min_profit) {
         LOG_DEBUG(quill_logger_,

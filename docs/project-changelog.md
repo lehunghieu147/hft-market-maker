@@ -4,6 +4,10 @@ All significant changes, features, and fixes are documented here. See `docs/deve
 
 ## [Unreleased]
 
+### Bug Fixes & Enhancements (Recent)
+- **WebSocketClient heap-use-after-free fix**: Destructor now properly shuts down socket before joining threads, then frees SSL resources. Prevents use-after-free errors on disconnect when threads try to access freed SSL context.
+- **Config precision fields**: Added `price_precision` and `quantity_precision` to trading config section. Enables proper handling of low-price assets (e.g., DOGE with price_precision=4 instead of default=2) to prevent order crossing due to rounding errors.
+
 ### Phase 07 - Momentum Taker Strategy (In Progress)
 - **Status**: Complete
 - **Changes**:

@@ -55,14 +55,18 @@ bool MarketMakerBot::initialize() {
     logger_->log(LogLevel::INFO, "Volatility tracker initialized");
 
     // Wire fill callback through exchange's WS trading connection
-    exchange_->set_fill_callback(
-        [this](const std::string& order_id, const std::string& client_order_id,
-               OrderSide side, OrderStatus status,
-               double price, double qty, double cum_qty) {
-            order_manager_->on_fill_event(order_id, client_order_id,
-                                          side, status, price, qty, cum_qty);
-        });
-    logger_->log(LogLevel::INFO, "User data stream callbacks wired via WS trading connection");
+    if (exchange_->supports_websocket_trading()) {
+        exchange_->set_fill_callback(
+            [this](const std::string& order_id, const std::string& client_order_id,
+                   OrderSide side, OrderStatus status,
+                   double price, double qty, double cum_qty) {
+                order_manager_->on_fill_event(order_id, client_order_id,
+                                              side, status, price, qty, cum_qty);
+            });
+        logger_->log(LogLevel::INFO, "User data stream wired via WS trading connection");
+    } else {
+        logger_->log(LogLevel::WARNING, "Fill tracking unavailable: set use_websocket_trading=true to enable");
+    }
 
     initialized_ = true;
     logger_->log(LogLevel::INFO, "Market Maker Bot V2 initialized successfully");

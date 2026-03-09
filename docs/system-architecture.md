@@ -139,7 +139,7 @@ Pre-trade gate (ordered checks):
 - HMAC-SHA256 for all authenticated requests
 - WebSocket payload size limit (16 MB)
 - RFC 6455 compliant pong (echoes ping payload)
-- Thread-safe SSL cleanup (join before free)
+- Thread-safe SSL cleanup: socket shutdown → thread join → SSL_free (prevents heap-use-after-free)
 - API credentials loaded from config/env, never logged
 
 ## Logging Subsystem (Quill v7.5.0)
@@ -170,6 +170,25 @@ LOG_INFO(logger, "Placed BID order {} @ {}", order_id, price);
 ### Graceful Shutdown
 ```cpp
 AppLogger::shutdown(); // Flushes all pending logs, stops backend
+```
+
+## Configuration Management
+
+### Precision Settings
+Trading configuration now includes asset-specific decimal precision:
+- **`price_precision`** (default: 2): Decimal places for order prices. Low-price assets like DOGE require higher precision (e.g., 4) to prevent rounding errors that cause order crossing.
+- **`quantity_precision`** (default: 6): Decimal places for order quantities.
+
+These settings are critical for exchange compliance: orders placed with incorrect precision are rejected. Binance enforces precision based on symbol LOT_SIZE and PRICE_FILTER rules.
+
+### Configuration File Structure
+```
+trading:
+  symbol: "DOGEEUSDT"
+  order_size: 100
+  spread_percentage: 0.1
+  price_precision: 4      # Custom precision for low-price assets
+  quantity_precision: 1   # LOT_SIZE precision
 ```
 
 ## Exchange Abstraction

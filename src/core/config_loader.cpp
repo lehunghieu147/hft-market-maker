@@ -60,6 +60,12 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
                 }
             }
 
+            // Precision settings
+            if (root["trading"].isMember("price_precision"))
+                config.price_precision = root["trading"]["price_precision"].asInt();
+            if (root["trading"].isMember("quantity_precision"))
+                config.quantity_precision = root["trading"]["quantity_precision"].asInt();
+
             // Load supported quote currencies array
             if (root["trading"].isMember("supported_quote_currencies") &&
                 root["trading"]["supported_quote_currencies"].isArray()) {

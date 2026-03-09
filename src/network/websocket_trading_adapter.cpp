@@ -119,9 +119,10 @@ void WebSocketTradingAdapter::disconnect() {
         ws_trading_client_->disconnect();
     }
 
-    if (connection_handler_) {
-        connection_handler_(false);
-    }
+    // Do NOT fire connection_handler_ here: each child client already fires it
+    // through the lambdas set in set_connection_handler(). Firing it again here
+    // would invoke the handler after both clients (and possibly MarketMakerBot)
+    // are being torn down, risking a use-after-free.
 }
 
 bool WebSocketTradingAdapter::subscribe_orderbook(const std::string& symbol, int depth) {

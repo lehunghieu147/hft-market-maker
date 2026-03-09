@@ -76,16 +76,7 @@ WebSocketClient::WebSocketClient() : pImpl(std::make_unique<Impl>()) {}
 
 WebSocketClient::~WebSocketClient() {
     should_run_ = false;
-    disconnect();
-    if (worker_thread_.joinable()) {
-        worker_thread_.join();
-    }
-    if (reconnect_thread_.joinable()) {
-        reconnect_thread_.join();
-    }
-    if (heartbeat_thread_.joinable()) {
-        heartbeat_thread_.join();
-    }
+    disconnect();  // joins threads + frees SSL/socket
 }
 
 bool WebSocketClient::connect(const std::string& uri) {
@@ -226,9 +217,12 @@ bool WebSocketClient::connect(const std::string& uri) {
                 last_message_time_ = std::chrono::steady_clock::now();
             }
 
-            // Start/restart worker thread
-            if (worker_thread_.joinable()) {
-                // Join old thread if it's still running
+            // Start/restart worker thread.
+            // Guard: do not join worker_thread_ if we are currently executing ON it
+            // (i.e. connect() was called from inside reconnect_thread_, which was
+            // spawned from run_worker() — joining would be a self-join = UB).
+            if (worker_thread_.joinable() &&
+                worker_thread_.get_id() != std::this_thread::get_id()) {
                 LOG_DEBUG(get_logger(), "{}", "[WS] Joining old worker thread...");
                 worker_thread_.join();
             }
@@ -236,7 +230,8 @@ bool WebSocketClient::connect(const std::string& uri) {
             LOG_DEBUG(get_logger(), "{}", "[WS] Worker thread started");
 
             // Start/restart heartbeat thread
-            if (heartbeat_thread_.joinable()) {
+            if (heartbeat_thread_.joinable() &&
+                heartbeat_thread_.get_id() != std::this_thread::get_id()) {
                 LOG_DEBUG(get_logger(), "{}", "[WS] Joining old heartbeat thread...");
                 heartbeat_thread_.join();
             }
@@ -258,10 +253,33 @@ bool WebSocketClient::connect(const std::string& uri) {
 
 void WebSocketClient::disconnect() {
     LOG_INFO(get_logger(), "{}", "[WS] Disconnecting...");
+    should_run_ = false;
     connected_ = false;
     if (connection_handler_) {
         connection_handler_(false);
     }
+
+    // Shutdown the socket to unblock SSL_read in worker_thread_,
+    // but don't free SSL yet — worker_thread_ still references it.
+    if (pImpl->socket_fd >= 0) {
+        ::shutdown(pImpl->socket_fd, SHUT_RDWR);
+    }
+
+    // Join threads before freeing SSL/socket resources
+    if (worker_thread_.joinable() &&
+        worker_thread_.get_id() != std::this_thread::get_id()) {
+        worker_thread_.join();
+    }
+    if (heartbeat_thread_.joinable() &&
+        heartbeat_thread_.get_id() != std::this_thread::get_id()) {
+        heartbeat_thread_.join();
+    }
+    if (reconnect_thread_.joinable() &&
+        reconnect_thread_.get_id() != std::this_thread::get_id()) {
+        reconnect_thread_.join();
+    }
+
+    // Now safe to free SSL and close socket
     pImpl->disconnect();
     LOG_INFO(get_logger(), "{}", "[WS] Disconnected");
 }
@@ -476,24 +494,23 @@ void WebSocketClient::run_worker() {
                 pos += payload_len;
             }
         } else if (bytes == 0) {
-            // Connection closed
-            LOG_ERROR(get_logger(), "{}", "WebSocket connection closed by server");
-            disconnect();
+            // Connection closed by server
+            if (should_run_) {
+                LOG_ERROR(get_logger(), "{}", "WebSocket connection closed by server");
+            }
             break;
         } else {
-            // Error occurred
+            // Error occurred — if shutting down, exit silently
+            if (!should_run_) break;
+
             int ssl_error = SSL_get_error(pImpl->ssl, bytes);
 
-            // Check if it's a timeout (not a real error)
+            // Timeout — not a real error
             if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
-                // Timeout occurred - check if connection is still alive
-                continue;  // Continue reading
+                continue;
             }
 
-            // Real error occurred
             LOG_ERROR(get_logger(), "SSL read error: {} (Socket: {})", ssl_error, strerror(errno));
-
-            disconnect();
             break;
         }
 

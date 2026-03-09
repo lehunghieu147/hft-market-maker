@@ -162,6 +162,13 @@ void WebSocketTradingClient::disconnect() {
         }
     }
 
+    // Join user_data_thread_ before stopping event loop — it calls send_request_and_wait
+    // which needs the event loop running. Must join before ws_client_->stop().
+    if (user_data_thread_.joinable()) {
+        LOG_DEBUG(get_logger(), "{}", "[WS Trading] Waiting for user data subscribe thread...");
+        user_data_thread_.join();
+    }
+
     // Stop the client
     if (ws_client_) {
         try {
@@ -219,7 +226,9 @@ void WebSocketTradingClient::handle_reconnect() {
             // Note: This is simplified - in production you'd want to recreate the connection properly
             connected_ = false;
 
-            if (connection_handler_) {
+            // Guard: only invoke connection_handler_ while still running to avoid
+            // calling into a partially-destroyed MarketMakerBot during shutdown.
+            if (running_ && connection_handler_) {
                 connection_handler_(false);
             }
         }
@@ -238,7 +247,11 @@ void WebSocketTradingClient::on_open([[maybe_unused]] websocketpp::connection_hd
     {
         std::lock_guard<std::mutex> lock(user_data_mutex_);
         if (fill_callback_ || balance_callback_) {
-            std::thread([this]() { subscribe_user_data_stream(); }).detach();
+            // Join any previous user_data_thread_ before spawning a new one
+            if (user_data_thread_.joinable()) {
+                user_data_thread_.join();
+            }
+            user_data_thread_ = std::thread([this]() { subscribe_user_data_stream(); });
         }
     }
 
@@ -251,7 +264,9 @@ void WebSocketTradingClient::on_close([[maybe_unused]] websocketpp::connection_h
     LOG_INFO(get_logger(), "{}", "WebSocket Trading connection closed");
     connected_ = false;
 
-    if (connection_handler_) {
+    // Only notify upstream if the client is still running (not during shutdown).
+    // During shutdown running_ is false; the disconnect() caller handles notification.
+    if (running_ && connection_handler_) {
         connection_handler_(false);
     }
 }
@@ -260,7 +275,7 @@ void WebSocketTradingClient::on_fail([[maybe_unused]] websocketpp::connection_hd
     LOG_ERROR(get_logger(), "{}", "WebSocket Trading connection failed");
     connected_ = false;
 
-    if (connection_handler_) {
+    if (running_ && connection_handler_) {
         connection_handler_(false);
     }
 }

@@ -275,6 +275,8 @@ int main(...) {
 - Range-check price changes (detect erroneous ticks)
 - Reject orders with invalid timestamps
 - Validate WebSocket frame payloads
+- Enforce price/quantity precision: round to configured decimal places before order submission
+- Use asset-specific precision settings (config.price_precision, config.quantity_precision)
 
 ### Network
 - Use HTTPS for REST (enforced by CURL)

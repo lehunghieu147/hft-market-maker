@@ -155,6 +155,7 @@ private:
     // Threads
     std::thread ws_thread_;
     std::thread reconnect_thread_;
+    std::thread user_data_thread_;  // tracks the subscribe_user_data_stream() dispatch
 
     // Internal methods
     void run_event_loop();
