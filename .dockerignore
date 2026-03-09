@@ -17,12 +17,11 @@ build/
 .gitignore
 
 # Documentation
-*.md
-!README.md
 docs/
 
 # Plans and reports
 plans/
+.claude/
 
 # Logs (don't copy existing logs into image)
 logs/
@@ -36,15 +35,12 @@ logs/
 # macOS
 .DS_Store
 
-# Linux
-*~
-
 # Environment files (sensitive)
 .env
 .env.*
-*.key
-*.pem
+config/gcp-service-account.json
 
-# Test files
-tests/
-*.test
+# Monitoring (separate docker service)
+monitoring/
+grafana-data/
+prometheus-data/

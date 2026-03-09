@@ -1,0 +1,56 @@
+syntax = "proto3";
+package trading;
+
+service TradingBotControl {
+    rpc GetStatus(Empty) returns (StatusResponse);
+    rpc SetConfig(ConfigUpdate) returns (Ack);
+    rpc StartTrading(Empty) returns (Ack);
+    rpc StopTrading(Empty) returns (Ack);
+    rpc KillSwitch(Empty) returns (Ack);
+    rpc StreamMetrics(MetricsStreamRequest) returns (stream MetricsUpdate);
+}
+
+message Empty {}
+
+message Ack {
+    bool success = 1;
+    string message = 2;
+}
+
+message StatusResponse {
+    double net_position = 1;
+    double daily_pnl = 2;
+    bool is_trading = 3;
+    int32 active_orders = 4;
+    string symbol = 5;
+    double spread_pct = 6;
+    double max_drawdown = 7;
+    bool kill_switch_active = 8;
+    int64 uptime_ms = 16;
+    double total_pnl = 17;
+    double fees_paid = 18;
+}
+
+message ConfigUpdate {
+    optional double spread_percentage = 1;
+    optional double order_size = 2;
+    optional double max_position_size = 3;
+    optional double max_daily_loss = 4;
+}
+
+message MetricsStreamRequest {
+    int32 interval_ms = 1;
+}
+
+message MetricsUpdate {
+    int64 timestamp_ms = 1;
+    double mid_price = 2;
+    double bid_price = 3;
+    double ask_price = 4;
+    double net_position = 5;
+    double daily_pnl = 6;
+    int64 orders_placed = 7;
+    int64 orders_filled = 8;
+    double latency_avg_ms = 9;
+    double spread_bps = 10;
+}

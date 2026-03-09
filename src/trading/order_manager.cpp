@@ -1,5 +1,6 @@
 #include "trading/order_manager.h"
 #include "core/app_logger.h"
+#include "core/metrics_collector.h"
 #include <format>
 #include <cmath>
 #include <random>
@@ -347,6 +348,7 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
     if (!order_result) {
         LOG_ERROR(logger_, "Failed to place {} order at {}", side_str, price);
         if (risk_manager_) risk_manager_->on_error();
+        MetricsCollector::instance().increment("orders_failed_total");
         std::lock_guard<std::mutex> lock(metrics_mutex_);
         metrics_.failed_orders++;
         return false;
@@ -355,6 +357,8 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
     if (risk_manager_) {
         risk_manager_->on_success();
     }
+
+    MetricsCollector::instance().increment("orders_placed_total");
 
     std::lock_guard<std::mutex> lock(orders_mutex_);
     if (side == OrderSide::BUY) {
@@ -391,6 +395,7 @@ bool OrderManager::cancel_order(const std::shared_ptr<Order>& order) {
         return false;
     }
 
+    MetricsCollector::instance().increment("orders_cancelled_total");
     LOG_DEBUG(logger_, "Canceled order: {}", order->order_id);
     return true;
 }
@@ -429,6 +434,8 @@ void OrderManager::update_metrics(const std::chrono::steady_clock::time_point& s
         end_time - orderbook_time
     ).count();
     double reaction_latency_ms = reaction_latency_us / 1000.0;
+
+    MetricsCollector::instance().observe("order_latency_ms", execution_latency_ms);
 
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     metrics_.update_latency(execution_latency_ms);
@@ -476,13 +483,28 @@ void OrderManager::on_fill_event(const std::string& order_id,
         }
     }
 
-    // Track position from real fills
+    // Track position and P&L from real fills
     if (risk_manager_ && quantity > 0 &&
         (status == OrderStatus::FILLED || status == OrderStatus::PARTIALLY_FILLED)) {
+        // Snapshot position state before updating
+        double position_before = risk_manager_->position_tracker().get_position();
+        double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+
+        // Update position
         risk_manager_->position_tracker().on_fill(side, price, quantity);
 
-        LOG_INFO(logger_, "FILL: {} {} @ {}",
-                 (side == OrderSide::BUY ? "BUY" : "SELL"), quantity, price);
+        // Compute realized P&L if position reduced (market maker = maker, else taker)
+        // Default: assume maker (limit orders). Taker IOC/market fills use same rate
+        // for now. Exact maker/taker could be parsed from Binance executionReport "m" field.
+        bool is_maker = true;
+        risk_manager_->pnl_tracker().on_fill(side, price, quantity,
+                                              position_before, avg_entry, is_maker);
+
+        MetricsCollector::instance().increment("orders_filled_total");
+
+        LOG_INFO(logger_, "FILL: {} {} @ {} (pos: {:.6f} -> {:.6f})",
+                 (side == OrderSide::BUY ? "BUY" : "SELL"), quantity, price,
+                 position_before, risk_manager_->position_tracker().get_position());
     }
 }
 

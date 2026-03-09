@@ -15,3 +15,10 @@ logs/
 
 # Trade logs
 trade.log
+
+# Docker volumes
+grafana-data/
+prometheus-data/
+
+# GCP service account (sensitive)
+config/gcp-service-account.json

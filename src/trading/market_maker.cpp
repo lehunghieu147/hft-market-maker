@@ -2,6 +2,8 @@
 #include "exchange/exchange_factory.h"
 #include "exchange/exchange_interface.h"
 #include "core/app_logger.h"
+#include "core/metrics_collector.h"
+#include <json/json.h>
 #include <chrono>
 
 namespace MarketMaker {
@@ -88,6 +90,16 @@ bool MarketMakerBot::initialize() {
                    double price, double qty, double cum_qty) {
                 order_manager_->on_fill_event(order_id, client_order_id,
                                               side, status, price, qty, cum_qty);
+                // Publish fill event to GCP Pub/Sub
+                Json::Value d;
+                d["order_id"] = order_id;
+                d["side"] = (side == OrderSide::BUY) ? "BUY" : "SELL";
+                d["status"] = static_cast<int>(status);
+                d["price"] = price;
+                d["qty"] = qty;
+                d["cum_qty"] = cum_qty;
+                Json::FastWriter w;
+                publish_event("fill", w.write(d));
             });
         logger_->log(LogLevel::INFO, "User data stream wired via WS trading connection");
     } else {
@@ -163,7 +175,11 @@ void MarketMakerBot::run() {
         return;
     }
 
-    running_ = true;
+    // Prevent double-start: if running_ was already true, return early
+    if (running_.exchange(true)) {
+        logger_->log(LogLevel::WARNING, "run() called while already running - ignoring");
+        return;
+    }
     logger_->log(LogLevel::INFO, "Starting Market Maker Bot V2...");
 
     // Start main trading loop in separate thread
@@ -189,6 +205,14 @@ void MarketMakerBot::stop() {
     // Wait for main thread to finish
     if (main_thread_.joinable()) {
         main_thread_.join();
+    }
+
+    // Print session P&L summary
+    if (risk_manager_) {
+        double pos = risk_manager_->position_tracker().get_position();
+        double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+        double mid = current_mid_price_.load();
+        risk_manager_->pnl_tracker().print_session_summary(mid, pos, avg_entry);
     }
 
     logger_->log(LogLevel::INFO, "Market Maker Bot V2 stopped");
@@ -232,6 +256,14 @@ void MarketMakerBot::check_and_update_orders() {
         return;
     }
 
+    // Snapshot mutable config fields under lock (written by gRPC thread)
+    double spread_pct, obi_tilt_factor;
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        spread_pct      = config_.spread_percentage;
+        obi_tilt_factor = config_.obi_tilt_factor;
+    }
+
     // Drain ring buffer, use the latest orderbook timestamp for latency tracking
     auto latest = orderbook_ring_.drain_latest();
     auto orderbook_time = latest ? latest->received_time : std::chrono::steady_clock::now();
@@ -241,7 +273,7 @@ void MarketMakerBot::check_and_update_orders() {
     if (obi_tracker_ && latest) {
         obi_tracker_->update(latest->book);
         if (obi_tracker_->is_significant()) {
-            obi_tilt = obi_tracker_->smoothed_obi() * config_.obi_tilt_factor;
+            obi_tilt = obi_tracker_->smoothed_obi() * obi_tilt_factor;
             LOG_INFO(quill_logger_, "[OBI] raw={:.3f} smoothed={:.3f} tilt={:.4f}",
                      obi_tracker_->raw_obi(), obi_tracker_->smoothed_obi(), obi_tilt);
         }
@@ -284,7 +316,7 @@ void MarketMakerBot::check_and_update_orders() {
             mid_price, bid_price, ask_price, orderbook_time);
     } else if (obi_tilt != 0.0) {
         // Fixed spread + OBI tilt
-        double spread = config_.spread_percentage;
+        double spread = spread_pct;
         double bid_offset = spread * (1.0 - obi_tilt);
         double ask_offset = spread * (1.0 + obi_tilt);
         double bid_price = mid_price * (1.0 - bid_offset);
@@ -338,8 +370,10 @@ void MarketMakerBot::handle_orderbook_update(const OrderBook& orderbook) {
 void MarketMakerBot::handle_connection_status(bool connected) {
     if (connected) {
         logger_->log(LogLevel::INFO, "Connected to " + config_.exchange_type + " exchange");
+        publish_event("connection", R"({"status":"connected"})");
     } else {
         logger_->log(LogLevel::WARNING, "Disconnected from " + config_.exchange_type + " exchange");
+        publish_event("connection", R"({"status":"disconnected"})");
     }
 }
 
@@ -398,13 +432,56 @@ void MarketMakerBot::print_status() {
              metrics.avg_reaction_latency_ms, metrics.min_reaction_latency_ms, metrics.max_reaction_latency_ms,
              metrics.reconnect_count, metrics.get_uptime_percentage());
 
+    // Publish status snapshot to GCP Pub/Sub
+    {
+        Json::Value d;
+        d["mid_price"] = current_mid_price_.load();
+        d["total_orders"] = static_cast<Json::UInt64>(metrics.total_orders);
+        d["success_rate"] = metrics.get_success_rate();
+        d["avg_latency_ms"] = metrics.avg_order_latency_ms;
+        if (risk_manager_) {
+            double pos = risk_manager_->position_tracker().get_position();
+            double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+            double mid = current_mid_price_.load();
+            d["position"] = pos;
+            d["daily_pnl"] = risk_manager_->pnl_tracker().get_daily_pnl();
+            d["realized_pnl"] = risk_manager_->pnl_tracker().get_realized_pnl();
+            d["unrealized_pnl"] = risk_manager_->pnl_tracker().get_unrealized_pnl(mid, pos, avg_entry);
+            d["total_pnl"] = risk_manager_->pnl_tracker().get_total_pnl(mid, pos, avg_entry);
+            d["kill_switch"] = risk_manager_->is_kill_switch_active();
+        }
+        Json::FastWriter w;
+        publish_event("status", w.write(d));
+    }
+
+    // Update Prometheus gauges
+    auto& mc = MetricsCollector::instance();
+    mc.set_gauge("mid_price", current_mid_price_.load());
+    mc.set_gauge("spread_bps", config_.spread_percentage * 10000);
+    mc.set_gauge("bot_running", running_ ? 1.0 : 0.0);
+
     if (risk_manager_) {
+        double pos = risk_manager_->position_tracker().get_position();
+        double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+        double mid = current_mid_price_.load();
+        double unrealized = risk_manager_->pnl_tracker().get_unrealized_pnl(mid, pos, avg_entry);
+        double total_pnl = risk_manager_->pnl_tracker().get_total_pnl(mid, pos, avg_entry);
+
+        mc.set_gauge("position_current", pos);
+        mc.set_gauge("pnl_daily_usd", risk_manager_->pnl_tracker().get_daily_pnl());
+        mc.set_gauge("pnl_realized_usd", risk_manager_->pnl_tracker().get_realized_pnl());
+        mc.set_gauge("pnl_unrealized_usd", unrealized);
+        mc.set_gauge("pnl_total_usd", total_pnl);
+        mc.set_gauge("kill_switch_active", risk_manager_->is_kill_switch_active() ? 1.0 : 0.0);
+
         LOG_INFO(quill_logger_,
-                 "[RISK] position={:.6f} daily_pnl={:.4f} total_pnl={:.4f} "
-                 "fees={:.4f} trades(win={} loss={} total={}) kill_switch={}",
-                 risk_manager_->position_tracker().get_position(),
-                 risk_manager_->pnl_tracker().get_daily_pnl(),
+                 "[RISK] position={:.6f} avg_entry={:.2f} realized={:.4f} unrealized={:.4f} "
+                 "total_pnl={:.4f} daily_pnl={:.4f} fees={:.4f} "
+                 "trades(win={} loss={} total={}) kill_switch={}",
+                 pos, avg_entry,
                  risk_manager_->pnl_tracker().get_realized_pnl(),
+                 unrealized, total_pnl,
+                 risk_manager_->pnl_tracker().get_daily_pnl(),
                  risk_manager_->pnl_tracker().get_total_fees(),
                  risk_manager_->pnl_tracker().get_winning_trades(),
                  risk_manager_->pnl_tracker().get_losing_trades(),
@@ -436,6 +513,60 @@ LatencyMetrics MarketMakerBot::get_metrics() const {
         return order_manager_->get_metrics();
     }
     return LatencyMetrics();
+}
+
+double MarketMakerBot::get_position() const {
+    return risk_manager_ ? risk_manager_->position_tracker().get_position() : 0.0;
+}
+
+double MarketMakerBot::get_daily_pnl() const {
+    return risk_manager_ ? risk_manager_->pnl_tracker().get_daily_pnl() : 0.0;
+}
+
+double MarketMakerBot::get_total_pnl() const {
+    return risk_manager_ ? risk_manager_->pnl_tracker().get_realized_pnl() : 0.0;
+}
+
+double MarketMakerBot::get_fees_paid() const {
+    return risk_manager_ ? risk_manager_->pnl_tracker().get_total_fees() : 0.0;
+}
+
+bool MarketMakerBot::is_kill_switch_active() const {
+    return risk_manager_ ? risk_manager_->is_kill_switch_active() : false;
+}
+
+std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>> MarketMakerBot::get_active_orders() const {
+    return order_manager_ ? order_manager_->get_active_orders()
+                          : std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>>{nullptr, nullptr};
+}
+
+void MarketMakerBot::activate_kill_switch(const std::string& reason) {
+    if (risk_manager_) risk_manager_->activate_kill_switch(reason);
+}
+
+void MarketMakerBot::publish_event(const std::string& event_type, const std::string& payload) {
+    if (!publisher_) return;
+
+    Json::Value root;
+    root["type"] = event_type;
+    root["symbol"] = config_.symbol;
+    root["timestamp_ms"] = static_cast<Json::Int64>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    // Parse payload into the event
+    Json::Value data;
+    Json::Reader reader;
+    if (reader.parse(payload, data)) {
+        root["data"] = data;
+    } else {
+        root["data"] = payload;
+    }
+
+    Json::FastWriter writer;
+    std::string json = writer.write(root);
+    if (!json.empty() && json.back() == '\n') json.pop_back();
+    publisher_->publish(json);
 }
 
 } // namespace MarketMaker

@@ -150,6 +150,14 @@ void MomentumTakerBot::stop() {
             main_thread_.join();
         }
 
+        // Print session P&L summary
+        if (risk_manager_) {
+            double pos = risk_manager_->position_tracker().get_position();
+            double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+            double mid = signal_engine_ ? signal_engine_->ema_value() : 0.0;
+            risk_manager_->pnl_tracker().print_session_summary(mid, pos, avg_entry);
+        }
+
         LOG_INFO(quill_logger_, "{}", "Momentum Taker Bot stopped");
     });
 }
@@ -282,13 +290,24 @@ void MomentumTakerBot::print_status() {
              latency_tracker_->percentile(0.99));
 
     if (risk_manager_) {
+        double pos = risk_manager_->position_tracker().get_position();
+        double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+        double mid = signal_engine_ ? signal_engine_->ema_value() : 0.0;
+        double unrealized = risk_manager_->pnl_tracker().get_unrealized_pnl(mid, pos, avg_entry);
+        double total_pnl = risk_manager_->pnl_tracker().get_total_pnl(mid, pos, avg_entry);
+
         LOG_INFO(quill_logger_,
-                 "[RISK] position={:.6f} daily_pnl={:.4f} total_pnl={:.4f} "
-                 "fees={:.4f} kill_switch={}",
-                 risk_manager_->position_tracker().get_position(),
-                 risk_manager_->pnl_tracker().get_daily_pnl(),
+                 "[RISK] position={:.6f} avg_entry={:.2f} realized={:.4f} unrealized={:.4f} "
+                 "total_pnl={:.4f} daily_pnl={:.4f} fees={:.4f} "
+                 "trades(win={} loss={} total={}) kill_switch={}",
+                 pos, avg_entry,
                  risk_manager_->pnl_tracker().get_realized_pnl(),
+                 unrealized, total_pnl,
+                 risk_manager_->pnl_tracker().get_daily_pnl(),
                  risk_manager_->pnl_tracker().get_total_fees(),
+                 risk_manager_->pnl_tracker().get_winning_trades(),
+                 risk_manager_->pnl_tracker().get_losing_trades(),
+                 risk_manager_->pnl_tracker().get_total_trades(),
                  risk_manager_->is_kill_switch_active() ? "ACTIVE" : "off");
     }
 }
