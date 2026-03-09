@@ -133,6 +133,8 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
                 config.momentum.order_size = m["order_size"].asDouble();
             if (m.isMember("order_type"))
                 config.momentum.order_type = m["order_type"].asString();
+            if (m.isMember("min_profit_bps"))
+                config.momentum.min_profit_bps = m["min_profit_bps"].asDouble();
             if (m.isMember("tick_recording"))
                 config.momentum.tick_recording = m["tick_recording"].asBool();
             if (m.isMember("tick_log_path"))

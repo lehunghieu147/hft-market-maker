@@ -23,6 +23,7 @@ struct MomentumConfig {
     double max_position = 10.0;       // Max position size
     double order_size = 0.001;        // Order quantity (independent from MM)
     std::string order_type = "ioc";   // "ioc" or "market"
+    double min_profit_bps = 0.0;      // Min profit threshold (basis points) above spread+fees
     bool tick_recording = false;      // Enable tick recording
     std::string tick_log_path = "logs/ticks.bin";
 };

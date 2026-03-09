@@ -244,6 +244,51 @@ nohup ./build/bin/market_maker config/config.json > output.log 2>&1 &
 # Stop: Ctrl+C (graceful shutdown)
 ```
 
+## Momentum Taker Bot
+
+A signal-driven taker bot that detects EMA crossover momentum and fires IOC/market orders.
+
+### Running
+
+```bash
+# Build (same as market maker)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+
+# Run with momentum config
+./build/bin/momentum_taker config/config.momentum.json
+```
+
+### Momentum Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `epsilon` | 0.0002 | Signal threshold: fires when `\|mid - ema\| / ema > epsilon` |
+| `ema_window` | 400 | EMA period (number of ticks) |
+| `cooldown_ms` | 500 | Minimum ms between signals |
+| `max_position` | 10.0 | Max absolute position size |
+| `order_size` | 0.001 | Order quantity per signal |
+| `order_type` | "ioc" | `"ioc"` or `"market"` |
+| `min_profit_bps` | 0.0 | Min profit above cost (basis points of mid price). 0 = disabled |
+
+### Epsilon Tuning Guide
+
+Epsilon controls signal sensitivity. Too tight = over-signaling in volatile markets. Too wide = missed opportunities.
+
+**Rule of thumb:** `epsilon >= spread + taker_fee` for signals to be profitable.
+
+| Symbol | Typical Spread | Suggested Epsilon Range |
+|--------|---------------|------------------------|
+| BTCUSDT | 0.01-0.05% | 0.0002-0.0005 |
+| ETHUSDT | 0.02-0.08% | 0.0003-0.0008 |
+| SOLUSDT | 0.03-0.10% | 0.0005-0.001 |
+
+### Cost Gate (`min_profit_bps`)
+
+Signals are rejected when: `|mid - ema| < spread + taker_fee * mid + min_profit_bps * mid`
+
+This prevents executing signals where the edge doesn't cover trading costs. Set `min_profit_bps: 0` to disable (backward compatible). A typical value of `0.0001` (1 bps) adds a small profit buffer above break-even.
+
 ## Performance Metrics
 
 The bot tracks and reports every 30 seconds:

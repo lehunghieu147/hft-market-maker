@@ -236,6 +236,23 @@ void MomentumTakerBot::execute_signal(const SignalState& state) {
         return;
     }
 
+    // Cost gate: reject signals where edge < spread + taker_fee + min_profit
+    if (state.best_ask <= state.best_bid) return;  // crossed market guard
+    double spread = state.best_ask - state.best_bid;
+    double mid = (state.best_ask + state.best_bid) / 2.0;
+    double ema = signal_engine_->ema_value();
+    double signal_edge = std::abs(mid - ema);
+    double cost = spread + (config_.taker_fee_rate * mid);
+    double min_profit = config_.momentum.min_profit_bps * mid;
+
+    if (signal_edge < cost + min_profit) {
+        LOG_DEBUG(quill_logger_,
+                  "[MOMENTUM] {} rejected: edge={:.4f} < cost={:.4f}+minprofit={:.4f}",
+                  state.signal == Signal::BUY ? "BUY" : "SELL",
+                  signal_edge, cost, min_profit);
+        return;
+    }
+
     OrderSide side = (state.signal == Signal::BUY) ? OrderSide::BUY : OrderSide::SELL;
     double price = (state.signal == Signal::BUY) ? state.best_ask : state.best_bid;
 
@@ -306,6 +323,11 @@ bool MomentumTakerBot::validate_config() {
 
     if (config_.momentum.epsilon <= 0) {
         LOG_ERROR(quill_logger_, "Invalid momentum epsilon: {}", config_.momentum.epsilon);
+        return false;
+    }
+
+    if (config_.momentum.min_profit_bps < 0) {
+        LOG_ERROR(quill_logger_, "Invalid momentum min_profit_bps: {} (must be >= 0)", config_.momentum.min_profit_bps);
         return false;
     }
 
