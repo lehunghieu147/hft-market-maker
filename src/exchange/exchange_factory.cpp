@@ -38,7 +38,9 @@ std::shared_ptr<IExchange> ExchangeFactory::create(const ExchangeConfig& config)
             config.api_key,
             config.api_secret,
             config.ws_url,
-            config.ws_trading_url
+            config.ws_trading_url,
+            config.price_precision,
+            config.quantity_precision
         );
         return ws_adapter;
     }

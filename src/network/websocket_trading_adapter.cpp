@@ -19,15 +19,19 @@ WebSocketTradingAdapter::WebSocketTradingAdapter(
     const std::string& api_key,
     const std::string& api_secret,
     const std::string& ws_market_base_url,
-    const std::string& ws_trading_base_url)
+    const std::string& ws_trading_base_url,
+    int price_precision,
+    int quantity_precision)
     : api_key_(api_key),
       api_secret_(api_secret),
       ws_market_base_url_(ws_market_base_url),
-      ws_trading_base_url_(ws_trading_base_url) {
+      ws_trading_base_url_(ws_trading_base_url),
+      price_precision_(price_precision),
+      quantity_precision_(quantity_precision) {
 
     // Initialize WebSocket clients
     ws_market_client_ = std::make_shared<WebSocketClient>();
-    ws_trading_client_ = std::make_shared<WebSocketTradingClient>(api_key, api_secret);
+    ws_trading_client_ = std::make_shared<WebSocketTradingClient>(api_key, api_secret, price_precision, quantity_precision);
 
     // Set up market data handler
     ws_market_client_->set_message_handler(
@@ -75,7 +79,7 @@ bool WebSocketTradingAdapter::connect() {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
             // Recreate WebSocket client for clean state
-            ws_trading_client_ = std::make_shared<WebSocketTradingClient>(api_key_, api_secret_);
+            ws_trading_client_ = std::make_shared<WebSocketTradingClient>(api_key_, api_secret_, price_precision_, quantity_precision_);
             ws_trading_client_->set_order_response_handler(
                 [this](const Json::Value& response) { handle_trading_response(response); }
             );

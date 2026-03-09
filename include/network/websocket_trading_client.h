@@ -27,7 +27,8 @@ public:
     using ConnectionHandler = std::function<void(bool)>;
     using ErrorHandler = std::function<void(const std::string&)>;
 
-    WebSocketTradingClient(const std::string& api_key, const std::string& api_secret);
+    WebSocketTradingClient(const std::string& api_key, const std::string& api_secret,
+                           int price_precision = 2, int quantity_precision = 5);
     ~WebSocketTradingClient();
 
     // Connection management
@@ -120,6 +121,10 @@ private:
     // Authentication
     std::string api_key_;
     std::string api_secret_;
+
+    // Precision for price/quantity formatting
+    int price_precision_{2};
+    int quantity_precision_{5};
 
     // Connection state
     std::atomic<bool> connected_{false};

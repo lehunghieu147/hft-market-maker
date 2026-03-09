@@ -31,8 +31,10 @@ void WebSocketTradingClient::TradingMetrics::update_response_time(double time_ms
     avg_response_time_ms = new_avg;
 }
 
-WebSocketTradingClient::WebSocketTradingClient(const std::string& api_key, const std::string& api_secret)
-    : api_key_(api_key), api_secret_(api_secret) {
+WebSocketTradingClient::WebSocketTradingClient(const std::string& api_key, const std::string& api_secret,
+                                               int price_precision, int quantity_precision)
+    : api_key_(api_key), api_secret_(api_secret),
+      price_precision_(price_precision), quantity_precision_(quantity_precision) {
 
     ws_client_ = std::make_unique<WsClient>();
 
@@ -538,8 +540,8 @@ std::optional<std::string> WebSocketTradingClient::place_limit_order(
     params["side"] = (side == OrderSide::BUY) ? "BUY" : "SELL";
     params["type"] = "LIMIT";
     params["timeInForce"] = "GTC";
-    params["price"] = format_price(price);
-    params["quantity"] = format_quantity(quantity);
+    params["price"] = format_price(price, price_precision_);
+    params["quantity"] = format_quantity(quantity, quantity_precision_);
 
     if (!client_order_id.empty()) {
         params["newClientOrderId"] = client_order_id;

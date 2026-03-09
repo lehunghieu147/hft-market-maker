@@ -20,7 +20,9 @@ public:
         const std::string& api_key,
         const std::string& api_secret,
         const std::string& ws_market_base_url,
-        const std::string& ws_trading_base_url
+        const std::string& ws_trading_base_url,
+        int price_precision = 2,
+        int quantity_precision = 5
     );
 
     ~WebSocketTradingAdapter();
@@ -138,6 +140,8 @@ private:
     std::string api_secret_;
     std::string ws_market_base_url_;
     std::string ws_trading_base_url_;
+    int price_precision_{2};
+    int quantity_precision_{5};
 
     // Symbol info cache
     struct SymbolInfo {
