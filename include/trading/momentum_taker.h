@@ -3,6 +3,7 @@
 
 #include "core/config.h"
 #include "core/types.h"
+#include "core/spsc-ring-buffer.h"
 #include "exchange/exchange_interface.h"
 #include "trading/order_manager.h"
 #include "trading/risk_manager.h"
@@ -44,16 +45,16 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> initialized_{false};
 
-    // Signal state (written by orderbook callback, read by main_loop)
+    // Signal state - lock-free SPSC ring buffer replaces mutex on hot path
     struct SignalState {
         Signal signal = Signal::NONE;
         double best_bid = 0.0;
         double best_ask = 0.0;
         std::chrono::steady_clock::time_point orderbook_time;
     };
-    SignalState cached_signal_;
-    std::mutex signal_mutex_;
+    SPSCRingBuffer<SignalState, 64> signal_ring_;
     std::atomic<bool> signal_fired_{false};
+    // Condition variable kept as idle-CPU fallback
     std::condition_variable signal_cv_;
     std::mutex signal_cv_mutex_;
 

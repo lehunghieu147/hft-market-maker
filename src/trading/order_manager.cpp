@@ -1,6 +1,6 @@
 #include "trading/order_manager.h"
 #include "core/app_logger.h"
-#include <sstream>
+#include <format>
 #include <cmath>
 #include <random>
 
@@ -15,6 +15,20 @@ OrderManager::OrderManager(std::shared_ptr<IExchange> exchange, const Config& co
 
 OrderManager::~OrderManager() {
     cancel_all_active_orders();
+}
+
+std::shared_ptr<Order> OrderManager::make_pooled_order(const Order& src) {
+    Order* raw = order_pool_.allocate(src);
+    if (!raw) {
+        // Pool exhausted — fallback to heap allocation
+        LOG_WARNING(logger_, "Order pool exhausted ({}/{} used), falling back to heap",
+                    order_pool_.allocated(), order_pool_.capacity());
+        return std::make_shared<Order>(src);
+    }
+    // Custom deleter returns the slot back to the pool
+    return std::shared_ptr<Order>(raw, [this](Order* p) {
+        order_pool_.deallocate(p);
+    });
 }
 
 bool OrderManager::place_market_maker_orders(double mid_price) {
@@ -355,9 +369,9 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
 
     std::lock_guard<std::mutex> lock(orders_mutex_);
     if (side == OrderSide::BUY) {
-        active_bid_order_ = std::make_shared<Order>(*order_result);
+        active_bid_order_ = make_pooled_order(*order_result);
     } else {
-        active_ask_order_ = std::make_shared<Order>(*order_result);
+        active_ask_order_ = make_pooled_order(*order_result);
     }
 
     LOG_INFO(logger_, "Placed {} order: ID={} Price={:.2f} Qty={:.2f} [ok={} fail={} total={}]",
@@ -442,12 +456,10 @@ std::string OrderManager::generate_client_order_id(OrderSide side) {
     thread_local std::mt19937 gen(rd());
     thread_local std::uniform_int_distribution<> dis(100000, 999999);
 
-    std::stringstream ss;
-    ss << "MM_" << (side == OrderSide::BUY ? "BID_" : "ASK_")
-       << std::chrono::system_clock::now().time_since_epoch().count()
-       << "_" << dis(gen);
-
-    return ss.str();
+    return std::format("MM_{}_{}_{}",
+        side == OrderSide::BUY ? "BID" : "ASK",
+        std::chrono::system_clock::now().time_since_epoch().count(),
+        dis(gen));
 }
 
 void OrderManager::on_fill_event(const std::string& order_id,

@@ -22,12 +22,12 @@ public:
     explicit RiskManager(const RiskConfig& config);
 
     // Pre-trade gate: checks all risk conditions
-    bool should_trade() const;
+    [[nodiscard]] bool should_trade() const;
 
     // Emergency stop
     void activate_kill_switch(const std::string& reason);
     void deactivate_kill_switch();
-    bool is_kill_switch_active() const { return kill_switch_.load(); }
+    [[nodiscard]] bool is_kill_switch_active() const { return kill_switch_.load(); }
 
     // Error tracking
     void on_error();

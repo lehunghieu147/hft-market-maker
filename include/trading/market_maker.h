@@ -3,6 +3,7 @@
 
 #include "core/config.h"
 #include "core/types.h"
+#include "core/spsc-ring-buffer.h"
 #include "exchange/exchange_interface.h"
 #include "trading/order_manager.h"
 #include "trading/risk_manager.h"
@@ -47,12 +48,17 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> initialized_{false};
 
-    // Market data
-    OrderBook current_orderbook_;
-    std::mutex orderbook_mutex_;
+    // Market data - lock-free SPSC ring buffer replaces mutex on hot path
+    // Timestamped orderbook snapshot pushed from WS thread, drained by strategy thread
+    struct TimestampedOrderBook {
+        OrderBook book;
+        std::chrono::steady_clock::time_point received_time;
+    };
+    SPSCRingBuffer<TimestampedOrderBook, 64> orderbook_ring_;
+
     std::atomic<double> current_mid_price_{0.0};
-    std::chrono::steady_clock::time_point last_orderbook_time_;
     std::atomic<bool> price_changed_{false};
+    // Condition variable kept as idle-CPU fallback (hybrid: spin briefly, then block)
     std::condition_variable price_change_cv_;
     std::mutex price_change_mutex_;
 
@@ -65,7 +71,6 @@ private:
 
     // Core logic
     void main_loop();
-    void update_mid_price();
     void check_and_update_orders();
 
     // Utilities

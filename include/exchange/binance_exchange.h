@@ -2,6 +2,7 @@
 #define BINANCE_EXCHANGE_H
 
 #include "exchange/exchange_interface.h"
+#include "exchange/exchange-crtp-adapter.h"
 #include "network/websocket_client.h"
 #include "network/rest_client.h"
 #include <memory>
@@ -11,7 +12,7 @@
 
 namespace MarketMaker {
 
-class BinanceExchange : public IExchange {
+class BinanceExchange : public IExchange, public CRTPExchange<BinanceExchange> {
 public:
     BinanceExchange();
     ~BinanceExchange() override;
@@ -105,6 +106,40 @@ public:
 
     // Configuration
     void set_supported_quote_currencies(const std::vector<std::string>& currencies);
+
+    // ========== CRTP _impl methods (compile-time dispatch) ==========
+    // These are called by CRTPExchange<BinanceExchange> and forward to
+    // the same underlying implementation as the virtual overrides.
+    // The compiler can inline these when the concrete type is known.
+    friend class CRTPExchange<BinanceExchange>;
+
+    std::optional<Order> place_limit_order_impl(
+        const std::string& symbol, OrderSide side, double price,
+        double quantity, const std::string& client_order_id) {
+        return place_limit_order(symbol, side, price, quantity, client_order_id);
+    }
+
+    std::optional<bool> cancel_order_impl(
+        const std::string& symbol, const std::string& order_id) {
+        return cancel_order(symbol, order_id);
+    }
+
+    std::optional<Order> get_order_status_impl(
+        const std::string& symbol, const std::string& order_id) {
+        return get_order_status(symbol, order_id);
+    }
+
+    std::optional<Order> place_ioc_order_impl(
+        const std::string& symbol, OrderSide side, double price,
+        double quantity, const std::string& client_order_id) {
+        return place_ioc_order(symbol, side, price, quantity, client_order_id);
+    }
+
+    std::optional<Order> place_market_order_impl(
+        const std::string& symbol, OrderSide side,
+        double quantity, const std::string& client_order_id) {
+        return place_market_order(symbol, side, quantity, client_order_id);
+    }
 
 private:
     // Binance-specific components

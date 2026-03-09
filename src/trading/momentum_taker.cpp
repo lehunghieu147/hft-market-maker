@@ -168,12 +168,11 @@ void MomentumTakerBot::main_loop() {
         if (!running_) break;
 
         if (signal_fired_.exchange(false)) {
-            SignalState state;
-            {
-                std::lock_guard<std::mutex> lock(signal_mutex_);
-                state = cached_signal_;
+            // Drain ring buffer, execute only the latest signal (freshest prices)
+            auto latest = signal_ring_.drain_latest();
+            if (latest) {
+                execute_signal(*latest);
             }
-            execute_signal(state);
         }
 
         auto now = std::chrono::steady_clock::now();
@@ -194,10 +193,8 @@ void MomentumTakerBot::handle_orderbook_update(const OrderBook& ob) {
     Signal sig = signal_engine_->on_tick(best_bid, best_ask);
 
     if (sig != Signal::NONE) {
-        {
-            std::lock_guard<std::mutex> lock(signal_mutex_);
-            cached_signal_ = {sig, best_bid, best_ask, ob_time};
-        }
+        // Lock-free push into ring buffer from WS callback thread
+        signal_ring_.try_push(SignalState{sig, best_bid, best_ask, ob_time});
         signal_fired_.store(true);
         signal_cv_.notify_one();
     }

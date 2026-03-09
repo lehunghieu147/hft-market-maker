@@ -50,7 +50,7 @@ public:
     OrderValidator(const TradingLimits& limits = TradingLimits());
 
     // Validate a single order
-    ValidationResult validate_order(
+    [[nodiscard]] ValidationResult validate_order(
         double price,
         double quantity,
         OrderSide side,
@@ -58,7 +58,7 @@ public:
     ) const;
 
     // Validate a pair of market maker orders
-    ValidationResult validate_market_maker_orders(
+    [[nodiscard]] ValidationResult validate_market_maker_orders(
         double bid_price,
         double ask_price,
         double quantity,

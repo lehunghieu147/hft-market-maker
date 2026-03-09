@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.14)
 project(MarketMakerBot VERSION 1.0.0 LANGUAGES CXX)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -40,11 +40,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(asio)
 
-# WebSocket++
+# WebSocket++ (develop branch has C++20 compatibility fixes)
 FetchContent_Declare(
     websocketpp
     GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
-    GIT_TAG 0.8.2
+    GIT_TAG develop
 )
 FetchContent_MakeAvailable(websocketpp)
 
@@ -63,8 +63,10 @@ FetchContent_MakeAvailable(quill)
 add_compile_definitions(ASIO_STANDALONE _WEBSOCKETPP_CPP11_STL_)
 
 # Include directories
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+# Project headers as normal (warnings enabled)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Third-party headers as SYSTEM (suppresses warnings from their code)
+include_directories(SYSTEM
     ${asio_SOURCE_DIR}/asio/include
     ${websocketpp_SOURCE_DIR}
 )
@@ -131,6 +133,20 @@ add_executable(momentum_taker
     ${COMMON_SOURCES}
 )
 target_link_libraries(momentum_taker PRIVATE ${LINK_LIBS})
+
+option(BUILD_BENCHMARKS "Build benchmarks" ON)
+
+if(BUILD_BENCHMARKS)
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable benchmark tests")
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "Disable benchmark gtests")
+    FetchContent_Declare(
+        benchmark
+        GIT_REPOSITORY https://github.com/google/benchmark.git
+        GIT_TAG v1.8.3
+    )
+    FetchContent_MakeAvailable(benchmark)
+    add_subdirectory(benchmarks)
+endif()
 
 # Installation
 install(TARGETS market_maker momentum_taker

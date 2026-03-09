@@ -35,23 +35,23 @@ struct OrderBook {
     std::vector<PriceLevel> asks;
     std::chrono::steady_clock::time_point timestamp;
 
-    double get_mid_price() const {
+    [[nodiscard]] double get_mid_price() const {
         if (bids.empty() || asks.empty()) {
             return 0.0;
         }
         return (bids[0].price + asks[0].price) / 2.0;
     }
 
-    double get_best_bid() const {
+    [[nodiscard]] double get_best_bid() const {
         return bids.empty() ? 0.0 : bids[0].price;
     }
 
-    double get_best_ask() const {
+    [[nodiscard]] double get_best_ask() const {
         return asks.empty() ? 0.0 : asks[0].price;
     }
 
     // Volume-weighted mid price using top N levels
-    double get_vwap_mid(size_t depth = 5) const {
+    [[nodiscard]] double get_vwap_mid(size_t depth = 5) const {
         if (bids.empty() || asks.empty()) return 0.0;
 
         double bid_value = 0.0, bid_volume = 0.0;
@@ -77,7 +77,7 @@ struct OrderBook {
     }
 
     // Orderbook imbalance ratio: >1 means more bid pressure, <1 more ask pressure
-    double get_imbalance_ratio(size_t depth = 5) const {
+    [[nodiscard]] double get_imbalance_ratio(size_t depth = 5) const {
         if (bids.empty() || asks.empty()) return 1.0;
 
         double bid_volume = 0.0, ask_volume = 0.0;
@@ -163,17 +163,17 @@ struct LatencyMetrics {
         min_reaction_latency_ms = std::min(min_reaction_latency_ms, latency_ms);
     }
 
-    double get_uptime_percentage() const {
+    [[nodiscard]] double get_uptime_percentage() const {
         auto now = std::chrono::steady_clock::now();
         auto uptime_seconds = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
         return uptime_seconds > 0 ? 100.0 : 0.0;  // Simplified, should track actual downtime
     }
 
-    double get_success_rate() const {
+    [[nodiscard]] double get_success_rate() const {
         return total_orders > 0 ? (static_cast<double>(successful_orders) / total_orders * 100.0) : 0.0;
     }
 
-    double get_orders_per_minute() const {
+    [[nodiscard]] double get_orders_per_minute() const {
         auto now = std::chrono::steady_clock::now();
         auto minutes = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count() / 60.0;
         return minutes > 0 ? (total_orders / minutes) : 0.0;

@@ -206,44 +206,30 @@ void MarketMakerBot::check_and_update_orders() {
         return;
     }
 
-    // Get the orderbook received timestamp
-    std::chrono::steady_clock::time_point orderbook_time;
-    {
-        std::lock_guard<std::mutex> lock(orderbook_mutex_);
-        orderbook_time = last_orderbook_time_;
-    }
+    // Drain ring buffer, use the latest orderbook timestamp for latency tracking
+    auto latest = orderbook_ring_.drain_latest();
+    auto orderbook_time = latest ? latest->received_time : std::chrono::steady_clock::now();
 
     // Use OrderManager to handle all order logic with latency tracking
     order_manager_->update_orders_if_needed(mid_price, orderbook_time);
 }
 
 void MarketMakerBot::handle_orderbook_update(const OrderBook& orderbook) {
-    // Capture timestamp immediately when orderbook update is received
-    auto orderbook_received_time = std::chrono::steady_clock::now();
-
-    // Update local orderbook
-    {
-        std::lock_guard<std::mutex> lock(orderbook_mutex_);
-        current_orderbook_ = orderbook;
-        last_orderbook_time_ = orderbook_received_time;
+    // Lock-free push into ring buffer from WS callback thread
+    TimestampedOrderBook snapshot{orderbook, std::chrono::steady_clock::now()};
+    if (!orderbook_ring_.try_push(std::move(snapshot))) {
+        LOG_WARNING(quill_logger_, "{}", "Orderbook ring buffer full - dropping update");
     }
 
-    // Calculate and update mid price
-    update_mid_price();
-}
-
-void MarketMakerBot::update_mid_price() {
-    std::lock_guard<std::mutex> lock(orderbook_mutex_);
-
-    if (!current_orderbook_.bids.empty() && !current_orderbook_.asks.empty()) {
-        // Use VWAP mid price for better accuracy
-        double new_mid_price = current_orderbook_.get_vwap_mid(5);
+    // Compute mid price and signal strategy thread
+    if (!orderbook.bids.empty() && !orderbook.asks.empty()) {
+        double new_mid_price = orderbook.get_vwap_mid(5);
         if (new_mid_price <= 0) {
-            new_mid_price = current_orderbook_.get_mid_price();
+            new_mid_price = orderbook.get_mid_price();
         }
         double old_mid_price = current_mid_price_.exchange(new_mid_price);
 
-        // Feed volatility tracker
+        // Feed volatility tracker (lightweight, ok in callback)
         if (volatility_tracker_) {
             volatility_tracker_->on_price(new_mid_price);
         }
@@ -255,11 +241,6 @@ void MarketMakerBot::update_mid_price() {
             // Signal price change for immediate reaction
             price_changed_.store(true);
             price_change_cv_.notify_one();
-
-            if (config_.enable_verbose_logging) {
-                LOG_DEBUG(quill_logger_, "Mid price updated: {:.5f} (Exchange: {})",
-                          new_mid_price, config_.exchange_type);
-            }
         }
     }
 }

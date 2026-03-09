@@ -15,12 +15,12 @@ public:
     explicit SignalEngine(const MomentumConfig& cfg);
 
     // Feed L2 top-of-book. Returns signal.
-    Signal on_tick(double best_bid, double best_ask);
+    [[nodiscard]] Signal on_tick(double best_bid, double best_ask);
 
     // Accessors
-    double ema_value() const;
-    Signal last_signal() const;
-    int64_t ticks_processed() const;
+    [[nodiscard]] double ema_value() const;
+    [[nodiscard]] Signal last_signal() const;
+    [[nodiscard]] int64_t ticks_processed() const;
 
     void reset();
 

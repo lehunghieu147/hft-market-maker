@@ -3,6 +3,7 @@
 
 #include "core/types.h"
 #include "core/config.h"
+#include "core/object-pool.h"
 #include "quill/Logger.h"
 #include "exchange/exchange_interface.h"
 #include "trading/risk_manager.h"
@@ -24,8 +25,8 @@ public:
     ~OrderManager();
 
     // Order management
-    bool place_market_maker_orders(double mid_price);
-    bool place_market_maker_orders(double mid_price, const std::chrono::steady_clock::time_point& orderbook_time);
+    [[nodiscard]] bool place_market_maker_orders(double mid_price);
+    [[nodiscard]] bool place_market_maker_orders(double mid_price, const std::chrono::steady_clock::time_point& orderbook_time);
     // Single taker order (IOC limit or market)
     bool place_taker_order(OrderSide side, double price, double quantity,
                            const std::string& order_type = "ioc",
@@ -48,7 +49,7 @@ public:
     std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>> get_active_orders() const;
 
     // Metrics
-    LatencyMetrics get_metrics() const;
+    [[nodiscard]] LatencyMetrics get_metrics() const;
     void reset_metrics();
 
     // Price formatting
@@ -60,6 +61,13 @@ private:
     Config config_;
     std::shared_ptr<RiskManager> risk_manager_;
     OrderValidator order_validator_;
+
+    // Pre-allocated pool for Order objects (eliminates heap allocation on hot path)
+    static constexpr std::size_t ORDER_POOL_SIZE = 128;
+    ObjectPool<Order, ORDER_POOL_SIZE> order_pool_;
+
+    // Create shared_ptr with custom deleter that returns to pool
+    std::shared_ptr<Order> make_pooled_order(const Order& src);
 
     mutable std::mutex orders_mutex_;
     std::shared_ptr<Order> active_bid_order_;

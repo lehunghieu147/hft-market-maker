@@ -67,7 +67,7 @@ public:
     virtual std::optional<std::string> get_exchange_info() = 0;
 
     // ========== Order Management ==========
-    virtual std::optional<Order> place_limit_order(
+    [[nodiscard]] virtual std::optional<Order> place_limit_order(
         const std::string& symbol,
         OrderSide side,
         double price,
@@ -75,14 +75,14 @@ public:
         const std::string& client_order_id = ""
     ) = 0;
 
-    virtual std::optional<Order> place_market_order(
+    [[nodiscard]] virtual std::optional<Order> place_market_order(
         const std::string& symbol,
         OrderSide side,
         double quantity,
         const std::string& client_order_id = ""
     ) = 0;
 
-    virtual std::optional<Order> place_ioc_order(
+    [[nodiscard]] virtual std::optional<Order> place_ioc_order(
         [[maybe_unused]] const std::string& symbol,
         [[maybe_unused]] OrderSide side,
         [[maybe_unused]] double price,
@@ -90,12 +90,12 @@ public:
         [[maybe_unused]] const std::string& client_order_id = ""
     ) { return std::nullopt; }  // default impl, override in exchange
 
-    virtual std::optional<bool> cancel_order(
+    [[nodiscard]] virtual std::optional<bool> cancel_order(
         const std::string& symbol,
         const std::string& order_id
     ) = 0;
 
-    virtual std::optional<bool> cancel_all_orders(const std::string& symbol) = 0;
+    [[nodiscard]] virtual std::optional<bool> cancel_all_orders(const std::string& symbol) = 0;
 
     virtual std::optional<Order> modify_order(
         const std::string& symbol,
