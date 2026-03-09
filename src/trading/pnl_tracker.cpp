@@ -107,6 +107,83 @@ long PnLTracker::get_total_trades() const {
     return winning_trades_ + losing_trades_;
 }
 
+void PnLTracker::on_fill(OrderSide side, double price, double quantity,
+                         double position_before, double avg_entry_price, bool is_maker) {
+    if (!std::isfinite(price) || !std::isfinite(quantity) || quantity <= 0) {
+        return;
+    }
+
+    // Determine if this fill reduces the position (closing trade)
+    bool is_reducing = (side == OrderSide::SELL && position_before > 0) ||
+                       (side == OrderSide::BUY && position_before < 0);
+
+    double fee_rate = is_maker ? maker_fee_rate_ : taker_fee_rate_;
+    double fee = price * quantity * fee_rate;
+
+    if (is_reducing && std::abs(avg_entry_price) > 1e-10) {
+        // Compute realized P&L on the closing portion
+        double close_qty = std::min(quantity, std::abs(position_before));
+        double gross_pnl = (position_before > 0)
+            ? (price - avg_entry_price) * close_qty   // long close: sell > avg = profit
+            : (avg_entry_price - price) * close_qty;  // short close: avg > buy = profit
+
+        double net_pnl = gross_pnl - fee;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        realized_pnl_ += net_pnl;
+        daily_pnl_ += net_pnl;
+        total_fees_ += fee;
+
+        peak_pnl_ = std::max(peak_pnl_, realized_pnl_);
+        double current_drawdown = realized_pnl_ - peak_pnl_;
+        max_drawdown_hit_ = std::min(max_drawdown_hit_, current_drawdown);
+
+        if (net_pnl >= 0) { winning_trades_++; } else { losing_trades_++; }
+
+        LOG_INFO(get_logger(),
+                 "[P&L] Fill #{}: {} {:.6f} @ {:.2f} (avg_entry={:.2f}) gross={:.4f} fee={:.4f} net={:.4f} | Daily: {:.4f} | Total: {:.4f}",
+                 winning_trades_ + losing_trades_,
+                 side == OrderSide::BUY ? "BUY" : "SELL", close_qty, price,
+                 avg_entry_price, gross_pnl, fee, net_pnl, daily_pnl_, realized_pnl_);
+    } else {
+        // Position increasing — only track fees
+        std::lock_guard<std::mutex> lock(mutex_);
+        total_fees_ += fee;
+    }
+}
+
+double PnLTracker::get_unrealized_pnl(double current_price, double position, double avg_entry_price) const {
+    if (std::abs(position) < 1e-10 || !std::isfinite(current_price)) return 0.0;
+    return (current_price - avg_entry_price) * position;
+}
+
+double PnLTracker::get_total_pnl(double current_price, double position, double avg_entry_price) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    double unrealized = (std::abs(position) > 1e-10 && std::isfinite(current_price))
+        ? (current_price - avg_entry_price) * position : 0.0;
+    return realized_pnl_ + unrealized;
+}
+
+void PnLTracker::print_session_summary(double current_price, double position, double avg_entry_price) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    double unrealized = (std::abs(position) > 1e-10 && std::isfinite(current_price))
+        ? (current_price - avg_entry_price) * position : 0.0;
+    double total = realized_pnl_ + unrealized;
+    long total_trades = winning_trades_ + losing_trades_;
+    double win_rate = total_trades > 0 ? (100.0 * winning_trades_ / total_trades) : 0.0;
+
+    LOG_INFO(get_logger(), "{}", "========== SESSION P&L SUMMARY ==========");
+    LOG_INFO(get_logger(), "[P&L] Realized P&L:   {:.4f} USDT", realized_pnl_);
+    LOG_INFO(get_logger(), "[P&L] Unrealized P&L: {:.4f} USDT", unrealized);
+    LOG_INFO(get_logger(), "[P&L] Total P&L:      {:.4f} USDT", total);
+    LOG_INFO(get_logger(), "[P&L] Total Fees:     {:.4f} USDT", total_fees_);
+    LOG_INFO(get_logger(), "[P&L] Max Drawdown:   {:.4f} USDT", max_drawdown_hit_);
+    LOG_INFO(get_logger(), "[P&L] Trades: {} (W:{} L:{} WR:{:.1f}%)",
+             total_trades, winning_trades_, losing_trades_, win_rate);
+    LOG_INFO(get_logger(), "[P&L] Position:       {:.6f} @ avg {:.2f}", position, avg_entry_price);
+    LOG_INFO(get_logger(), "{}", "=========================================");
+}
+
 void PnLTracker::reset_daily() {
     std::lock_guard<std::mutex> lock(mutex_);
     daily_pnl_ = 0.0;

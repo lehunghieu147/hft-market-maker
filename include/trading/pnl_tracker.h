@@ -17,6 +17,20 @@ public:
     // Record a completed trade (buy+sell pair or partial)
     void on_trade(double entry_price, double exit_price, double quantity, bool is_maker);
 
+    // Record a fill event — computes realized P&L when position reduces
+    // position_before: net position before this fill, avg_entry_price: average cost basis
+    void on_fill(OrderSide side, double price, double quantity,
+                 double position_before, double avg_entry_price, bool is_maker);
+
+    // Unrealized P&L on open position (mark-to-market)
+    double get_unrealized_pnl(double current_price, double position, double avg_entry_price) const;
+
+    // Total P&L = realized + unrealized
+    double get_total_pnl(double current_price, double position, double avg_entry_price) const;
+
+    // Print session summary on shutdown
+    void print_session_summary(double current_price, double position, double avg_entry_price) const;
+
     // Check if within daily loss limits
     bool is_within_limits() const;
 

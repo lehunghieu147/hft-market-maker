@@ -207,6 +207,14 @@ void MarketMakerBot::stop() {
         main_thread_.join();
     }
 
+    // Print session P&L summary
+    if (risk_manager_) {
+        double pos = risk_manager_->position_tracker().get_position();
+        double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+        double mid = current_mid_price_.load();
+        risk_manager_->pnl_tracker().print_session_summary(mid, pos, avg_entry);
+    }
+
     logger_->log(LogLevel::INFO, "Market Maker Bot V2 stopped");
 }
 
@@ -432,9 +440,14 @@ void MarketMakerBot::print_status() {
         d["success_rate"] = metrics.get_success_rate();
         d["avg_latency_ms"] = metrics.avg_order_latency_ms;
         if (risk_manager_) {
-            d["position"] = risk_manager_->position_tracker().get_position();
+            double pos = risk_manager_->position_tracker().get_position();
+            double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+            double mid = current_mid_price_.load();
+            d["position"] = pos;
             d["daily_pnl"] = risk_manager_->pnl_tracker().get_daily_pnl();
-            d["total_pnl"] = risk_manager_->pnl_tracker().get_realized_pnl();
+            d["realized_pnl"] = risk_manager_->pnl_tracker().get_realized_pnl();
+            d["unrealized_pnl"] = risk_manager_->pnl_tracker().get_unrealized_pnl(mid, pos, avg_entry);
+            d["total_pnl"] = risk_manager_->pnl_tracker().get_total_pnl(mid, pos, avg_entry);
             d["kill_switch"] = risk_manager_->is_kill_switch_active();
         }
         Json::FastWriter w;
@@ -448,17 +461,27 @@ void MarketMakerBot::print_status() {
     mc.set_gauge("bot_running", running_ ? 1.0 : 0.0);
 
     if (risk_manager_) {
-        mc.set_gauge("position_current", risk_manager_->position_tracker().get_position());
+        double pos = risk_manager_->position_tracker().get_position();
+        double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+        double mid = current_mid_price_.load();
+        double unrealized = risk_manager_->pnl_tracker().get_unrealized_pnl(mid, pos, avg_entry);
+        double total_pnl = risk_manager_->pnl_tracker().get_total_pnl(mid, pos, avg_entry);
+
+        mc.set_gauge("position_current", pos);
         mc.set_gauge("pnl_daily_usd", risk_manager_->pnl_tracker().get_daily_pnl());
-        mc.set_gauge("pnl_total_usd", risk_manager_->pnl_tracker().get_realized_pnl());
+        mc.set_gauge("pnl_realized_usd", risk_manager_->pnl_tracker().get_realized_pnl());
+        mc.set_gauge("pnl_unrealized_usd", unrealized);
+        mc.set_gauge("pnl_total_usd", total_pnl);
         mc.set_gauge("kill_switch_active", risk_manager_->is_kill_switch_active() ? 1.0 : 0.0);
 
         LOG_INFO(quill_logger_,
-                 "[RISK] position={:.6f} daily_pnl={:.4f} total_pnl={:.4f} "
-                 "fees={:.4f} trades(win={} loss={} total={}) kill_switch={}",
-                 risk_manager_->position_tracker().get_position(),
-                 risk_manager_->pnl_tracker().get_daily_pnl(),
+                 "[RISK] position={:.6f} avg_entry={:.2f} realized={:.4f} unrealized={:.4f} "
+                 "total_pnl={:.4f} daily_pnl={:.4f} fees={:.4f} "
+                 "trades(win={} loss={} total={}) kill_switch={}",
+                 pos, avg_entry,
                  risk_manager_->pnl_tracker().get_realized_pnl(),
+                 unrealized, total_pnl,
+                 risk_manager_->pnl_tracker().get_daily_pnl(),
                  risk_manager_->pnl_tracker().get_total_fees(),
                  risk_manager_->pnl_tracker().get_winning_trades(),
                  risk_manager_->pnl_tracker().get_losing_trades(),

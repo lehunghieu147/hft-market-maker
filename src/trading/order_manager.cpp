@@ -483,14 +483,28 @@ void OrderManager::on_fill_event(const std::string& order_id,
         }
     }
 
-    // Track position from real fills
+    // Track position and P&L from real fills
     if (risk_manager_ && quantity > 0 &&
         (status == OrderStatus::FILLED || status == OrderStatus::PARTIALLY_FILLED)) {
+        // Snapshot position state before updating
+        double position_before = risk_manager_->position_tracker().get_position();
+        double avg_entry = risk_manager_->position_tracker().get_average_entry_price();
+
+        // Update position
         risk_manager_->position_tracker().on_fill(side, price, quantity);
+
+        // Compute realized P&L if position reduced (market maker = maker, else taker)
+        // Default: assume maker (limit orders). Taker IOC/market fills use same rate
+        // for now. Exact maker/taker could be parsed from Binance executionReport "m" field.
+        bool is_maker = true;
+        risk_manager_->pnl_tracker().on_fill(side, price, quantity,
+                                              position_before, avg_entry, is_maker);
+
         MetricsCollector::instance().increment("orders_filled_total");
 
-        LOG_INFO(logger_, "FILL: {} {} @ {}",
-                 (side == OrderSide::BUY ? "BUY" : "SELL"), quantity, price);
+        LOG_INFO(logger_, "FILL: {} {} @ {} (pos: {:.6f} -> {:.6f})",
+                 (side == OrderSide::BUY ? "BUY" : "SELL"), quantity, price,
+                 position_before, risk_manager_->position_tracker().get_position());
     }
 }
 
