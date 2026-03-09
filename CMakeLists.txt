@@ -60,17 +60,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(quill)
 
-# cpp-httplib (single header HTTP server for Prometheus metrics)
-# Disable SSL - only need plain HTTP for metrics/health endpoints
-set(HTTPLIB_REQUIRE_OPENSSL OFF CACHE BOOL "")
-set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "")
+# prometheus-cpp (Prometheus client library with built-in HTTP exposer)
+set(ENABLE_PUSH OFF CACHE BOOL "Don't need pushgateway")
+set(ENABLE_COMPRESSION OFF CACHE BOOL "No zlib dep needed")
+set(ENABLE_TESTING OFF CACHE BOOL "Disable prometheus-cpp tests")
 FetchContent_Declare(
-    httplib
-    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-    GIT_TAG v0.15.3
+    prometheus-cpp
+    GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
+    GIT_TAG v1.2.4
     GIT_SHALLOW TRUE
 )
-FetchContent_MakeAvailable(httplib)
+FetchContent_MakeAvailable(prometheus-cpp)
 
 add_compile_definitions(ASIO_STANDALONE _WEBSOCKETPP_CPP11_STL_)
 
@@ -114,6 +114,7 @@ set(COMMON_SOURCES
     src/cloud/gcp_publisher.cpp
     src/cloud/gcp_storage_client.cpp
     # Metrics
+    src/core/metrics_collector.cpp
     src/core/metrics_server.cpp
 )
 
@@ -124,7 +125,8 @@ set(LINK_LIBS
     CURL::libcurl
     jsoncpp_lib
     quill::quill
-    httplib::httplib
+    prometheus-cpp::pull
+    prometheus-cpp::core
 )
 
 # Static curl requires transitive dependencies - find by full path

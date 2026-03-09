@@ -1,10 +1,9 @@
 #include "core/metrics_server.h"
 #include "core/metrics_collector.h"
 #include "core/app_logger.h"
-#include "httplib.h"
 
-#include <thread>
-#include <chrono>
+#include <prometheus/exposer.h>
+#include <string>
 
 namespace MarketMaker {
 
@@ -15,35 +14,21 @@ public:
     }
 
     void start() {
-        server_.Get("/metrics", [](const httplib::Request&, httplib::Response& res) {
-            res.set_content(MetricsCollector::instance().render(),
-                            "text/plain; version=0.0.4; charset=utf-8");
-        });
-
-        auto start_time = std::chrono::steady_clock::now();
-        server_.Get("/health", [start_time](const httplib::Request&, httplib::Response& res) {
-            auto uptime_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - start_time).count();
-            std::string body = R"({"status":"ok","uptime_ms":)" + std::to_string(uptime_ms) + "}";
-            res.set_content(body, "application/json");
-        });
-
-        thread_ = std::thread([this]() {
-            LOG_INFO(logger_, "Metrics server listening on 0.0.0.0:{}", port_);
-            server_.listen("0.0.0.0", port_);
-        });
+        exposer_ = std::make_unique<prometheus::Exposer>(
+            "0.0.0.0:" + std::to_string(port_));
+        exposer_->RegisterCollectable(
+            MetricsCollector::instance().registry());
+        LOG_INFO(logger_, "Metrics server listening on 0.0.0.0:{}", port_);
     }
 
     void stop() {
-        server_.stop();
-        if (thread_.joinable()) thread_.join();
+        exposer_.reset();
         LOG_INFO(logger_, "{}", "Metrics server stopped");
     }
 
 private:
-    httplib::Server server_;
     int port_;
-    std::thread thread_;
+    std::unique_ptr<prometheus::Exposer> exposer_;
     quill::Logger* logger_ = nullptr;
 };
 
