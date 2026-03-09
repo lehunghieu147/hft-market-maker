@@ -1,6 +1,13 @@
 #include "trading/market_maker.h"
 #include "core/config_loader.h"
 #include "core/app_logger.h"
+#include "core/metrics_server.h"
+#include "core/gcp_auth_provider.h"
+#include "cloud/gcp_publisher.h"
+#include "cloud/gcp_storage_client.h"
+#ifdef BUILD_GRPC
+#include "network/grpc_server.h"
+#endif
 #include <iostream>
 #include <signal.h>
 #include <atomic>
@@ -137,6 +144,38 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        // Start metrics server
+        std::unique_ptr<MetricsServer> metrics_server;
+        if (config.metrics_port > 0) {
+            metrics_server = std::make_unique<MetricsServer>(config.metrics_port);
+            metrics_server->start();
+        }
+
+        // Start gRPC server
+#ifdef BUILD_GRPC
+        std::unique_ptr<GrpcServer> grpc_server;
+        if (config.grpc_port > 0) {
+            grpc_server = std::make_unique<GrpcServer>(*bot, config.grpc_port);
+            grpc_server->start();
+        }
+#endif
+
+        // Start GCP publisher
+        std::shared_ptr<GcpAuthProvider> gcp_auth;
+        std::unique_ptr<GcpPublisher> gcp_publisher;
+        std::unique_ptr<GcpStorageClient> gcp_storage;
+        if (config.gcp.enabled && !config.gcp.service_account_path.empty()) {
+            gcp_auth = std::make_shared<GcpAuthProvider>(config.gcp.service_account_path);
+            if (gcp_auth->is_loaded()) {
+                gcp_publisher = std::make_unique<GcpPublisher>(
+                    *gcp_auth, config.gcp.project_id, config.gcp.pubsub_topic);
+                gcp_publisher->start();
+                gcp_storage = std::make_unique<GcpStorageClient>(
+                    *gcp_auth, config.gcp.gcs_bucket);
+                LOG_INFO(logger, "GCP integration enabled (project: {})", config.gcp.project_id);
+            }
+        }
+
         // Run bot
         LOG_INFO(logger, "{}", "Starting market maker bot... Press Ctrl+C to stop");
 
@@ -150,8 +189,19 @@ int main(int argc, char* argv[]) {
         // Ensure bot is stopped
         if (should_exit && bot) {
             LOG_INFO(logger, "{}", "Shutting down bot gracefully...");
+
+            // Upload log file to GCS on shutdown
+            if (gcp_storage) {
+                gcp_storage->upload_file("logs/shutdown-" + config.symbol + ".log", config.log_file);
+            }
+
+#ifdef BUILD_GRPC
+            if (grpc_server) grpc_server->stop();
+#endif
+            if (gcp_publisher) gcp_publisher->stop();
+            if (metrics_server) metrics_server->stop();
+
             bot->stop();
-            // Give time for cleanup
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
 

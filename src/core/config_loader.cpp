@@ -184,6 +184,29 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
                 config.momentum.volume_expansion_threshold = m["volume_expansion_threshold"].asDouble();
         }
 
+        // GCP settings
+        if (root.isMember("gcp")) {
+            auto& g = root["gcp"];
+            if (g.isMember("enabled"))
+                config.gcp.enabled = g["enabled"].asBool();
+            if (g.isMember("project_id"))
+                config.gcp.project_id = g["project_id"].asString();
+            if (g.isMember("service_account_path"))
+                config.gcp.service_account_path = g["service_account_path"].asString();
+            if (g.isMember("pubsub_topic"))
+                config.gcp.pubsub_topic = g["pubsub_topic"].asString();
+            if (g.isMember("gcs_bucket"))
+                config.gcp.gcs_bucket = g["gcs_bucket"].asString();
+        }
+
+        // gRPC port
+        if (root.isMember("grpc_port"))
+            config.grpc_port = root["grpc_port"].asInt();
+
+        // Metrics port
+        if (root.isMember("metrics_port"))
+            config.metrics_port = root["metrics_port"].asInt();
+
         // Logging settings
         if (root.isMember("logging")) {
             config.enable_verbose_logging = root["logging"]["verbose"].asBool();

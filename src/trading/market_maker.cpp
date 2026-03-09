@@ -2,6 +2,7 @@
 #include "exchange/exchange_factory.h"
 #include "exchange/exchange_interface.h"
 #include "core/app_logger.h"
+#include "core/metrics_collector.h"
 #include <chrono>
 
 namespace MarketMaker {
@@ -163,7 +164,11 @@ void MarketMakerBot::run() {
         return;
     }
 
-    running_ = true;
+    // Prevent double-start: if running_ was already true, return early
+    if (running_.exchange(true)) {
+        logger_->log(LogLevel::WARNING, "run() called while already running - ignoring");
+        return;
+    }
     logger_->log(LogLevel::INFO, "Starting Market Maker Bot V2...");
 
     // Start main trading loop in separate thread
@@ -232,6 +237,14 @@ void MarketMakerBot::check_and_update_orders() {
         return;
     }
 
+    // Snapshot mutable config fields under lock (written by gRPC thread)
+    double spread_pct, obi_tilt_factor;
+    {
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        spread_pct      = config_.spread_percentage;
+        obi_tilt_factor = config_.obi_tilt_factor;
+    }
+
     // Drain ring buffer, use the latest orderbook timestamp for latency tracking
     auto latest = orderbook_ring_.drain_latest();
     auto orderbook_time = latest ? latest->received_time : std::chrono::steady_clock::now();
@@ -241,7 +254,7 @@ void MarketMakerBot::check_and_update_orders() {
     if (obi_tracker_ && latest) {
         obi_tracker_->update(latest->book);
         if (obi_tracker_->is_significant()) {
-            obi_tilt = obi_tracker_->smoothed_obi() * config_.obi_tilt_factor;
+            obi_tilt = obi_tracker_->smoothed_obi() * obi_tilt_factor;
             LOG_INFO(quill_logger_, "[OBI] raw={:.3f} smoothed={:.3f} tilt={:.4f}",
                      obi_tracker_->raw_obi(), obi_tracker_->smoothed_obi(), obi_tilt);
         }
@@ -284,7 +297,7 @@ void MarketMakerBot::check_and_update_orders() {
             mid_price, bid_price, ask_price, orderbook_time);
     } else if (obi_tilt != 0.0) {
         // Fixed spread + OBI tilt
-        double spread = config_.spread_percentage;
+        double spread = spread_pct;
         double bid_offset = spread * (1.0 - obi_tilt);
         double ask_offset = spread * (1.0 + obi_tilt);
         double bid_price = mid_price * (1.0 - bid_offset);
@@ -398,7 +411,18 @@ void MarketMakerBot::print_status() {
              metrics.avg_reaction_latency_ms, metrics.min_reaction_latency_ms, metrics.max_reaction_latency_ms,
              metrics.reconnect_count, metrics.get_uptime_percentage());
 
+    // Update Prometheus gauges
+    auto& mc = MetricsCollector::instance();
+    mc.set_gauge("mid_price", current_mid_price_.load());
+    mc.set_gauge("spread_bps", config_.spread_percentage * 10000);
+    mc.set_gauge("bot_running", running_ ? 1.0 : 0.0);
+
     if (risk_manager_) {
+        mc.set_gauge("position_current", risk_manager_->position_tracker().get_position());
+        mc.set_gauge("pnl_daily_usd", risk_manager_->pnl_tracker().get_daily_pnl());
+        mc.set_gauge("pnl_total_usd", risk_manager_->pnl_tracker().get_realized_pnl());
+        mc.set_gauge("kill_switch_active", risk_manager_->is_kill_switch_active() ? 1.0 : 0.0);
+
         LOG_INFO(quill_logger_,
                  "[RISK] position={:.6f} daily_pnl={:.4f} total_pnl={:.4f} "
                  "fees={:.4f} trades(win={} loss={} total={}) kill_switch={}",
@@ -436,6 +460,35 @@ LatencyMetrics MarketMakerBot::get_metrics() const {
         return order_manager_->get_metrics();
     }
     return LatencyMetrics();
+}
+
+double MarketMakerBot::get_position() const {
+    return risk_manager_ ? risk_manager_->position_tracker().get_position() : 0.0;
+}
+
+double MarketMakerBot::get_daily_pnl() const {
+    return risk_manager_ ? risk_manager_->pnl_tracker().get_daily_pnl() : 0.0;
+}
+
+double MarketMakerBot::get_total_pnl() const {
+    return risk_manager_ ? risk_manager_->pnl_tracker().get_realized_pnl() : 0.0;
+}
+
+double MarketMakerBot::get_fees_paid() const {
+    return risk_manager_ ? risk_manager_->pnl_tracker().get_total_fees() : 0.0;
+}
+
+bool MarketMakerBot::is_kill_switch_active() const {
+    return risk_manager_ ? risk_manager_->is_kill_switch_active() : false;
+}
+
+std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>> MarketMakerBot::get_active_orders() const {
+    return order_manager_ ? order_manager_->get_active_orders()
+                          : std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>>{nullptr, nullptr};
+}
+
+void MarketMakerBot::activate_kill_switch(const std::string& reason) {
+    if (risk_manager_) risk_manager_->activate_kill_switch(reason);
 }
 
 } // namespace MarketMaker

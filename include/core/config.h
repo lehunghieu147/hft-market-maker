@@ -110,6 +110,22 @@ struct Config {
     // Exchange-specific parameters (optional)
     std::map<std::string, std::string> extra_params;
 
+    // GCP Cloud Integration
+    struct GcpConfig {
+        bool enabled = false;
+        std::string project_id;
+        std::string service_account_path;
+        std::string pubsub_topic = "trading-events";
+        std::string gcs_bucket = "trading-logs";
+    };
+    GcpConfig gcp;
+
+    // gRPC control API port (0 = disabled)
+    int grpc_port = 50051;
+
+    // Prometheus metrics HTTP port (0 = disabled)
+    int metrics_port = 8888;
+
     // Momentum strategy config
     MomentumConfig momentum;
 

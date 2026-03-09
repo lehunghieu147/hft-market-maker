@@ -1,0 +1,111 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "id": null,
+  "uid": "trading-bot",
+  "title": "HFT Market Maker",
+  "tags": ["trading", "hft"],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Net Position",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "position_current", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "thresholds": { "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 0.01 },
+          { "color": "red", "value": 0.1 }
+        ]}}
+      }
+    },
+    {
+      "id": 2,
+      "title": "Daily P&L (USD)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "pnl_daily_usd", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": { "unit": "currencyUSD", "thresholds": { "steps": [
+          { "color": "red", "value": null },
+          { "color": "green", "value": 0 }
+        ]}}
+      }
+    },
+    {
+      "id": 3,
+      "title": "Mid Price",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+      "targets": [{ "expr": "mid_price", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 4,
+      "title": "Orders Placed Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 6 },
+      "targets": [
+        { "expr": "rate(orders_placed_total[5m])", "legendFormat": "placed", "refId": "A" },
+        { "expr": "rate(orders_filled_total[5m])", "legendFormat": "filled", "refId": "B" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Order Latency p99 (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 6 },
+      "targets": [{
+        "expr": "histogram_quantile(0.99, rate(order_latency_ms_bucket[5m]))",
+        "legendFormat": "p99",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+    {
+      "id": 6,
+      "title": "Spread (bps)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 16, "y": 6 },
+      "targets": [{ "expr": "spread_bps", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "thresholds": { "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 50 },
+          { "color": "red", "value": 200 }
+        ]}}
+      }
+    },
+    {
+      "id": 7,
+      "title": "Kill Switch",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 20, "y": 6 },
+      "targets": [{ "expr": "kill_switch_active", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": { "mappings": [
+          { "type": "value", "options": { "0": { "text": "OFF", "color": "green" }, "1": { "text": "ACTIVE", "color": "red" } } }
+        ]}
+      }
+    },
+    {
+      "id": 8,
+      "title": "Bot Running",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 12 },
+      "targets": [{ "expr": "bot_running", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": { "mappings": [
+          { "type": "value", "options": { "0": { "text": "STOPPED", "color": "red" }, "1": { "text": "RUNNING", "color": "green" } } }
+        ]}
+      }
+    }
+  ],
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": { "list": [] },
+  "version": 1
+}

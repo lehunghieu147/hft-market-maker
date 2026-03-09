@@ -1,91 +1,50 @@
-# ============================================================================
-# HFT Market Maker Bot - Multi-stage Dockerfile
-# ============================================================================
-# Stage 1: Builder - compile the application
-# Stage 2: Runtime - minimal image with only runtime dependencies
-# ============================================================================
+# === Build Stage ===
+FROM ubuntu:22.04 AS builder
 
-# ============================================================================
-# Stage 1: Builder
-# ============================================================================
-FROM ubuntu:24.04 AS builder
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install build dependencies
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    libssl-dev \
-    libcurl4-openssl-dev \
-    ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git ca-certificates \
+    libssl-dev libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /app
+WORKDIR /build
+COPY CMakeLists.txt .
+COPY include/ include/
+COPY src/ src/
+COPY protos/ protos/
+COPY benchmarks/ benchmarks/
+COPY tests/ tests/
 
-# Copy source code
-COPY . .
+# Build (gRPC & deps fetched via FetchContent)
+RUN cmake -S . -B out \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_BENCHMARKS=OFF \
+    && cmake --build out -j$(nproc)
 
-# Build the application
-# Using Release build for production optimization (-O3, -march=native)
-RUN cmake -S . -B out -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build out -j$(nproc)
+# === Runtime Stage ===
+FROM debian:bookworm-slim AS runtime
 
-# ============================================================================
-# Stage 2: Runtime
-# ============================================================================
-FROM ubuntu:24.04
-
-# Install runtime dependencies only
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    libssl3 \
-    libcurl4 \
-    ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 libcurl4 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-# Use UID 10000 to avoid conflicts with existing system users
-RUN useradd -m -u 10000 trader && \
-    mkdir -p /app/logs /app/config && \
-    chown -R trader:trader /app
-
-# Set working directory
 WORKDIR /app
 
-# Copy compiled binary from builder
-COPY --from=builder --chown=trader:trader /app/out/bin/market_maker ./market_maker
+# Copy binaries
+COPY --from=builder /build/out/market_maker .
+COPY --from=builder /build/out/momentum_taker .
 
-# Copy shared libraries from builder (jsoncpp, quill)
-COPY --from=builder /app/out/lib/*.so* /usr/local/lib/
-RUN ldconfig
+# Copy config templates
+COPY config/ config/
 
-# Copy config files and create config.json from example (gitignored)
-COPY --chown=trader:trader config/ ./config/
-RUN cp -n config/config.example.json config/config.json
-
-# Switch to non-root user
-USER trader
-
-# Create logs directory
 RUN mkdir -p logs
 
-# Environment variables (override these at runtime)
-ENV BINANCE_API_KEY="" \
-    BINANCE_API_SECRET="" \
-    SYMBOL="BTCUSDT" \
-    ORDER_SIZE="0.001" \
-    SPREAD_PERCENTAGE="0.02"
+# gRPC + Metrics ports
+EXPOSE 50051 8888
 
-# Expose port (if metrics/monitoring needed in future)
-# EXPOSE 8080
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8888/health || exit 1
 
-# Health check (optional - check if process is running)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD pgrep -f market_maker || exit 1
-
-# Run the application
-# Use config file passed as argument or default to config.json
 ENTRYPOINT ["./market_maker"]
 CMD ["config/config.json"]

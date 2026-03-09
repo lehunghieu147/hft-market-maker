@@ -41,5 +41,14 @@
         "reconnect_delay_ms": 5000,
         "max_reconnect_attempts": 10,
         "max_orders_per_second": 2
+    },
+    "grpc_port": 50051,
+    "metrics_port": 8888,
+    "gcp": {
+        "enabled": false,
+        "project_id": "your-gcp-project-id",
+        "service_account_path": "config/gcp-service-account.json",
+        "pubsub_topic": "trading-events",
+        "gcs_bucket": "trading-logs"
     }
 }

@@ -60,6 +60,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(quill)
 
+# cpp-httplib (single header HTTP server for Prometheus metrics)
+# Disable SSL - only need plain HTTP for metrics/health endpoints
+set(HTTPLIB_REQUIRE_OPENSSL OFF CACHE BOOL "")
+set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "")
+FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.15.3
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(httplib)
+
 add_compile_definitions(ASIO_STANDALONE _WEBSOCKETPP_CPP11_STL_)
 
 # Include directories
@@ -97,6 +109,12 @@ set(COMMON_SOURCES
     src/trading/signal_engine.cpp
     src/trading/latency_tracker.cpp
     src/trading/orderbook-imbalance-tracker.cpp
+    # Cloud / GCP
+    src/core/gcp_auth_provider.cpp
+    src/cloud/gcp_publisher.cpp
+    src/cloud/gcp_storage_client.cpp
+    # Metrics
+    src/core/metrics_server.cpp
 )
 
 set(LINK_LIBS
@@ -106,6 +124,7 @@ set(LINK_LIBS
     CURL::libcurl
     jsoncpp_lib
     quill::quill
+    httplib::httplib
 )
 
 # Static curl requires transitive dependencies - find by full path
@@ -162,6 +181,78 @@ add_executable(phase_b_tests
     src/backtesting/backtest-engine.cpp
 )
 target_link_libraries(phase_b_tests PRIVATE Threads::Threads quill::quill)
+
+# --- gRPC Control API (optional) ---
+option(BUILD_GRPC "Build with gRPC control API" ON)
+
+if(BUILD_GRPC)
+    set(ABSL_ENABLE_INSTALL ON CACHE BOOL "")
+    set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "")
+    set(protobuf_INSTALL OFF CACHE BOOL "")
+    set(utf8_range_ENABLE_INSTALL OFF CACHE BOOL "")
+    set(gRPC_BUILD_TESTS OFF CACHE BOOL "")
+    set(gRPC_BUILD_CSHARP_EXT OFF CACHE BOOL "")
+    set(gRPC_BUILD_GRPC_CSHARP_PLUGIN OFF CACHE BOOL "")
+    set(gRPC_BUILD_GRPC_NODE_PLUGIN OFF CACHE BOOL "")
+    set(gRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN OFF CACHE BOOL "")
+    set(gRPC_BUILD_GRPC_PHP_PLUGIN OFF CACHE BOOL "")
+    set(gRPC_BUILD_GRPC_PYTHON_PLUGIN OFF CACHE BOOL "")
+    set(gRPC_BUILD_GRPC_RUBY_PLUGIN OFF CACHE BOOL "")
+
+    FetchContent_Declare(
+        gRPC
+        GIT_REPOSITORY https://github.com/grpc/grpc.git
+        GIT_TAG v1.60.1
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(gRPC)
+
+    # Proto code generation
+    set(PROTO_SRC "${CMAKE_CURRENT_SOURCE_DIR}/protos/trading_bot.proto")
+    set(PROTO_OUT "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    file(MAKE_DIRECTORY ${PROTO_OUT})
+
+    add_custom_command(
+        OUTPUT
+            "${PROTO_OUT}/trading_bot.pb.cc"
+            "${PROTO_OUT}/trading_bot.pb.h"
+            "${PROTO_OUT}/trading_bot.grpc.pb.cc"
+            "${PROTO_OUT}/trading_bot.grpc.pb.h"
+        COMMAND $<TARGET_FILE:protoc>
+            --grpc_out="${PROTO_OUT}"
+            --cpp_out="${PROTO_OUT}"
+            --plugin=protoc-gen-grpc=$<TARGET_FILE:grpc_cpp_plugin>
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/protos"
+            "${PROTO_SRC}"
+        DEPENDS "${PROTO_SRC}" protoc grpc_cpp_plugin
+    )
+
+    # gRPC service library
+    add_library(trading_bot_grpc
+        src/network/grpc_server.cpp
+        src/network/trading_bot_service_impl.cpp
+        "${PROTO_OUT}/trading_bot.pb.cc"
+        "${PROTO_OUT}/trading_bot.grpc.pb.cc"
+    )
+    target_include_directories(trading_bot_grpc PUBLIC
+        ${PROTO_OUT}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_include_directories(trading_bot_grpc SYSTEM PUBLIC
+        ${asio_SOURCE_DIR}/asio/include
+        ${websocketpp_SOURCE_DIR}
+    )
+    target_link_libraries(trading_bot_grpc PUBLIC
+        grpc++
+        libprotobuf
+        quill::quill
+    )
+
+    target_compile_definitions(market_maker PRIVATE BUILD_GRPC)
+    target_compile_definitions(momentum_taker PRIVATE BUILD_GRPC)
+    target_link_libraries(market_maker PRIVATE trading_bot_grpc)
+    target_link_libraries(momentum_taker PRIVATE trading_bot_grpc)
+endif()
 
 option(BUILD_BENCHMARKS "Build benchmarks" ON)
 
