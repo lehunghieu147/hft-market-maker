@@ -121,6 +121,10 @@ bool UserDataStream::create_listen_key() {
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
     CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
@@ -129,12 +133,17 @@ bool UserDataStream::create_listen_key() {
         return false;
     }
 
+    if (http_code != 200) {
+        LOG_ERROR(get_logger(), "[USER_STREAM] Listen key HTTP {}: {}", http_code, response);
+        return false;
+    }
+
     Json::Value root;
     Json::CharReaderBuilder builder;
     std::istringstream stream(response);
     std::string errors;
     if (!Json::parseFromStream(builder, stream, &root, &errors)) {
-        LOG_ERROR(get_logger(), "{}", "[USER_STREAM] Failed to parse listen key response");
+        LOG_ERROR(get_logger(), "[USER_STREAM] Failed to parse listen key response: {}", response);
         return false;
     }
 
