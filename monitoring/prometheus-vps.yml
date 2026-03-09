@@ -1,0 +1,18 @@
+# Prometheus config for VPS (agent mode)
+# Scrapes local bot metrics and remote-writes to local Prometheus receiver
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: 'market-maker'
+    static_configs:
+      - targets: ['localhost:8888']
+        labels:
+          instance: 'vps-japan'
+          strategy: 'market-making'
+
+# Forward all metrics to local machine's Prometheus
+# Replace YOUR_LOCAL_IP with your local machine's public IP or tunnel endpoint
+remote_write:
+  - url: 'http://YOUR_LOCAL_IP:9091/api/v1/write'

@@ -1,0 +1,8 @@
+# Prometheus config for local machine (receiver mode)
+# Receives remote-write data from VPS Prometheus
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+# No scrape_configs needed — data arrives via remote_write from VPS
+scrape_configs: []
