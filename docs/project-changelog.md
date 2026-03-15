@@ -4,6 +4,26 @@ All significant changes, features, and fixes are documented here. See `docs/deve
 
 ## [Unreleased]
 
+### Phase C1-C5 - Market Maker Enhancements (2026-03-16)
+- **Status**: Complete
+- **Scope**: Inventory skew, multi-level quoting, toxic flow detection, GLFT extension, dual-window volatility, per-side position limits, drawdown-aware spreads, time-of-day rules, spread multiplier stacking (5x cap)
+- **Key Additions**:
+  - **Strategy Features** (`config.h`):
+    - `inventory_skew_factor`: Mean-revert position toward neutral (alternative to AS model)
+    - `num_quote_levels`, `level_spacing_multiplier`, `level_size_decay`: Multi-level quoting
+    - `use_toxic_flow_detection`, `toxic_flow_window/threshold/spread_mult`: Detect adverse flow
+    - `use_glft`: GLFT extension of Avellaneda-Stoikov (inventory penalty near limits)
+    - `vol_fast_window`, `vol_regime_threshold/spread_mult`: Dual-window volatility regimes
+  - **Risk Features** (`config.h`):
+    - `max_long_position`, `max_short_position`: Per-side asymmetric limits
+    - `max_drawdown_spread_multiplier`: Widen spreads at max drawdown
+    - `time_of_day_rules[]`: Schedule-based spread multipliers
+  - **Latency & Order Execution**:
+    - Thread pool for order cancels/places (replaces std::async)
+    - Batch cancel-replace via Binance WS API (`order.cancelReplace`)
+    - `LatencyTracker` with P50/P95/P99 percentiles (6 new Prometheus gauges: exec + reaction)
+  - **Spread Multiplier Stacking**: Toxicity * Drawdown * Regime * TimeOfDay, capped at 5x
+
 ### Phase B1-B5 - Advanced Strategies & Backtesting (2025-03-09)
 - **Status**: Complete
 - **Scope**: Inventory-aware quoting, order book imbalance detection, multi-timeframe momentum, dynamic sizing, backtesting framework

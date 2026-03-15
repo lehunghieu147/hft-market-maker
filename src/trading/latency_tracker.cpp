@@ -10,6 +10,7 @@ LatencyTracker::LatencyTracker(size_t max_samples)
 }
 
 void LatencyTracker::record(int64_t duration_us) {
+    std::lock_guard<std::mutex> lock(mutex_);
     samples_[head_ % max_samples_] = duration_us;
     head_++;
     if (count_ < max_samples_) {
@@ -18,6 +19,7 @@ void LatencyTracker::record(int64_t duration_us) {
 }
 
 double LatencyTracker::percentile(double p) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (count_ == 0) return 0.0;
 
     // Copy active samples to temp vector
@@ -34,6 +36,7 @@ double LatencyTracker::percentile(double p) const {
 }
 
 double LatencyTracker::mean() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (count_ == 0) return 0.0;
 
     int64_t sum = 0;
@@ -45,6 +48,7 @@ double LatencyTracker::mean() const {
 }
 
 int64_t LatencyTracker::max() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (count_ == 0) return 0;
 
     int64_t max_val = 0;
@@ -56,10 +60,12 @@ int64_t LatencyTracker::max() const {
 }
 
 size_t LatencyTracker::count() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return count_;
 }
 
 void LatencyTracker::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
     head_ = 0;
     count_ = 0;
 }

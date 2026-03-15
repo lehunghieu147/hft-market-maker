@@ -17,6 +17,7 @@ struct RiskConfig {
     int max_consecutive_errors = 5;
     double maker_fee_rate = -0.0001;
     double taker_fee_rate = 0.001;
+    double max_drawdown_spread_multiplier = 0.0;  // 0 = disabled
 };
 
 class RiskManager {
@@ -51,6 +52,9 @@ public:
 
     // Volatility-adjusted position limit: contracts in high vol
     double adjusted_position_limit(double base_limit) const;
+
+    // Drawdown-based spread multiplier: [1.0, 1.0 + max_mult] as loss approaches limit
+    double get_drawdown_spread_multiplier(double mid_price) const;
 
     // Get config
     const RiskConfig& get_config() const { return config_; }

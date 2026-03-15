@@ -12,20 +12,28 @@ namespace {
 namespace MarketMaker {
 
 PositionTracker::PositionTracker(double max_position_size)
-    : max_position_size_(max_position_size) {}
+    : max_position_size_(max_position_size)
+    , max_long_position_(max_position_size)
+    , max_short_position_(max_position_size) {}
+
+void PositionTracker::set_asymmetric_limits(double max_long, double max_short) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    max_long_position_ = max_long;
+    max_short_position_ = max_short;
+}
 
 bool PositionTracker::can_place_order(OrderSide side, double quantity) const {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    double projected = current_position_;
-    if (side == OrderSide::BUY) {
-        projected += quantity;
-    } else {
-        projected -= quantity;
-    }
+    double projected = current_position_ + (side == OrderSide::BUY ? quantity : -quantity);
 
-    if (std::abs(projected) > max_position_size_) {
-        LOG_WARNING(get_logger(), "[RISK] Position limit would be exceeded: {} > {}", std::abs(projected), max_position_size_);
+    // Asymmetric limits: check long and short separately
+    if (projected > max_long_position_) {
+        LOG_WARNING(get_logger(), "[RISK] Long limit would be exceeded: {:.6f} > {:.6f}", projected, max_long_position_);
+        return false;
+    }
+    if (projected < -max_short_position_) {
+        LOG_WARNING(get_logger(), "[RISK] Short limit would be exceeded: {:.6f} < -{:.6f}", projected, max_short_position_);
         return false;
     }
     return true;
@@ -33,8 +41,9 @@ bool PositionTracker::can_place_order(OrderSide side, double quantity) const {
 
 bool PositionTracker::can_place_pair(double buy_qty, double sell_qty) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return std::abs(current_position_ + buy_qty) <= max_position_size_ &&
-           std::abs(current_position_ - sell_qty) <= max_position_size_;
+    double after_buy = current_position_ + buy_qty;
+    double after_sell = current_position_ - sell_qty;
+    return after_buy <= max_long_position_ && after_sell >= -max_short_position_;
 }
 
 void PositionTracker::on_fill(OrderSide side, double price, double quantity) {

@@ -198,6 +198,54 @@ int main(...) {
 - Const-correctness throughout
 - Prefer composition over inheritance
 
+## Key Components (Phase C Enhancements)
+
+### LatencyTracker
+Circular buffer for recording and analyzing latency percentiles.
+
+**File**: `include/trading/latency_tracker.h`
+
+**Usage**:
+```cpp
+LatencyTracker tracker(10000);  // 10k samples circular buffer
+tracker.record(latency_us);     // Record measurement in microseconds
+double p50 = tracker.percentile(0.50);  // 50th percentile
+double p95 = tracker.percentile(0.95);  // 95th percentile
+double p99 = tracker.percentile(0.99);  // 99th percentile
+```
+
+**Thread Safety**: Mutex-protected. Safe for concurrent access from multiple threads.
+
+### ThreadPool (include/core/thread-pool.h)
+Executes order cancel/place operations in parallel.
+
+**Key Methods**:
+- `execute(fn)`: Submit task, returns future
+- Replaces `std::async` for deterministic thread count
+- Batch cancel-replace via Binance WS API `order.cancelReplace`
+
+**Usage Pattern**:
+```cpp
+ThreadPool pool(4);  // 4 worker threads
+auto future = pool.execute([]() { /* task */ });
+future.get();  // Wait for completion
+```
+
+### ToxicFlowDetector
+Tracks fill patterns to detect one-sided toxic flow.
+
+**Configuration**:
+- `toxic_flow_window`: Rolling sample size (default 50)
+- `toxic_flow_threshold`: Trigger when one-sided % >= threshold (default 0.7)
+- `toxic_flow_spread_mult`: Spread multiplier (default 1.5)
+
+**Logic**: When N% of recent fills are on same side, widen spread to reduce adverse selection.
+
+### TradeFlowTracker (include/trading/trade-flow-tracker.h)
+Records and analyzes the flow of trades for statistical analysis.
+
+**Metrics**: One-sided percentage, imbalance intensity, regime detection.
+
 ## Error Handling
 
 ### Exceptions

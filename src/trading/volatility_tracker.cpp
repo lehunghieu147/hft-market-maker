@@ -7,10 +7,16 @@ namespace MarketMaker {
 
 VolatilityTracker::VolatilityTracker(size_t window_size,
                                      double min_spread,
-                                     double max_spread)
+                                     double max_spread,
+                                     size_t fast_window_size,
+                                     double regime_threshold,
+                                     double regime_spread_mult)
     : window_size_(window_size),
       min_spread_(min_spread),
-      max_spread_(max_spread) {}
+      max_spread_(max_spread),
+      fast_window_size_(fast_window_size),
+      regime_threshold_(regime_threshold),
+      regime_spread_mult_(regime_spread_mult) {}
 
 void VolatilityTracker::on_price(double price) {
     if (!std::isfinite(price) || price <= 0) return;
@@ -31,6 +37,19 @@ void VolatilityTracker::on_price(double price) {
         // Welford's removal is numerically tricky, so recompute is safer
         prices_.pop_front();
         recompute_welford();
+    }
+
+    // Fast window maintenance for regime detection
+    fast_prices_.push_back(price);
+    if (fast_prices_.size() <= fast_window_size_) {
+        fast_count_++;
+        double fd = price - fast_mean_;
+        fast_mean_ += fd / static_cast<double>(fast_count_);
+        double fd2 = price - fast_mean_;
+        fast_m2_ += fd * fd2;
+    } else {
+        fast_prices_.pop_front();
+        recompute_fast_welford();
     }
 
     // Baseline volatility: initialize once, then slowly adapt via EWMA
@@ -107,12 +126,54 @@ double VolatilityTracker::get_volatility_ratio() const {
     return std::clamp(ratio, 0.5, 2.0);
 }
 
+double VolatilityTracker::get_fast_volatility() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (fast_count_ < 2) return 0.0;
+    double variance = fast_m2_ / static_cast<double>(fast_count_ - 1);
+    return std::sqrt(std::max(0.0, variance));
+}
+
+double VolatilityTracker::get_regime_spread_multiplier() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (fast_count_ < fast_window_size_ / 2 || count_ < window_size_ / 2) return 1.0;
+
+    double slow_vol = (count_ > 1) ? std::sqrt(std::max(0.0, m2_ / (count_ - 1))) : 0.0;
+    double fast_vol = (fast_count_ > 1) ? std::sqrt(std::max(0.0, fast_m2_ / (fast_count_ - 1))) : 0.0;
+
+    if (slow_vol < 1e-12) return 1.0;
+    double ratio = fast_vol / slow_vol;
+    if (ratio >= regime_threshold_) {
+        double t = std::min((ratio - regime_threshold_) / regime_threshold_, 1.0);
+        return 1.0 + t * (regime_spread_mult_ - 1.0);
+    }
+    return 1.0;
+}
+
+void VolatilityTracker::recompute_fast_welford() {
+    fast_count_ = fast_prices_.size();
+    fast_mean_ = 0.0;
+    fast_m2_ = 0.0;
+    if (fast_count_ == 0) return;
+    double n = 0;
+    for (double p : fast_prices_) {
+        n++;
+        double delta = p - fast_mean_;
+        fast_mean_ += delta / n;
+        double delta2 = p - fast_mean_;
+        fast_m2_ += delta * delta2;
+    }
+}
+
 void VolatilityTracker::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
     prices_.clear();
     mean_ = 0.0;
     m2_ = 0.0;
     count_ = 0;
+    fast_prices_.clear();
+    fast_mean_ = 0.0;
+    fast_m2_ = 0.0;
+    fast_count_ = 0;
     baseline_volatility_ = 0.0;
     baseline_set_ = false;
 }

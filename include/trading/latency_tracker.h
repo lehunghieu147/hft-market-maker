@@ -4,9 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <mutex>
 
 namespace MarketMaker {
 
+// Thread-safe circular buffer latency tracker with percentile support.
 class LatencyTracker {
 public:
     explicit LatencyTracker(size_t max_samples = 10000);
@@ -19,6 +21,7 @@ public:
     void reset();
 
 private:
+    mutable std::mutex mutex_;
     std::vector<int64_t> samples_;
     size_t head_ = 0;
     size_t count_ = 0;

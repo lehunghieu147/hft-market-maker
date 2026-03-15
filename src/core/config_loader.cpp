@@ -110,6 +110,12 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
                 config.maker_fee_rate = root["risk"]["maker_fee_rate"].asDouble();
             if (root["risk"].isMember("taker_fee_rate"))
                 config.taker_fee_rate = root["risk"]["taker_fee_rate"].asDouble();
+            if (root["risk"].isMember("max_drawdown_spread_multiplier"))
+                config.max_drawdown_spread_multiplier = root["risk"]["max_drawdown_spread_multiplier"].asDouble();
+            if (root["risk"].isMember("max_long_position"))
+                config.max_long_position = root["risk"]["max_long_position"].asDouble();
+            if (root["risk"].isMember("max_short_position"))
+                config.max_short_position = root["risk"]["max_short_position"].asDouble();
         }
 
         // Avellaneda-Stoikov model settings
@@ -139,6 +145,39 @@ std::optional<Config> ConfigLoader::load_from_file(const std::string& filename) 
                 config.obi_tilt_factor = s["obi_tilt_factor"].asDouble();
             if (s.isMember("obi_min_volume"))
                 config.obi_min_volume = s["obi_min_volume"].asDouble();
+            if (s.isMember("inventory_skew_factor"))
+                config.inventory_skew_factor = s["inventory_skew_factor"].asDouble();
+            if (s.isMember("num_quote_levels"))
+                config.num_quote_levels = s["num_quote_levels"].asInt();
+            if (s.isMember("level_spacing_multiplier"))
+                config.level_spacing_multiplier = s["level_spacing_multiplier"].asDouble();
+            if (s.isMember("level_size_decay"))
+                config.level_size_decay = s["level_size_decay"].asDouble();
+            if (s.isMember("use_toxic_flow_detection"))
+                config.use_toxic_flow_detection = s["use_toxic_flow_detection"].asBool();
+            if (s.isMember("toxic_flow_window"))
+                config.toxic_flow_window = s["toxic_flow_window"].asInt();
+            if (s.isMember("toxic_flow_threshold"))
+                config.toxic_flow_threshold = s["toxic_flow_threshold"].asDouble();
+            if (s.isMember("toxic_flow_spread_mult"))
+                config.toxic_flow_spread_mult = s["toxic_flow_spread_mult"].asDouble();
+            if (s.isMember("use_glft"))
+                config.use_glft = s["use_glft"].asBool();
+            if (s.isMember("vol_fast_window"))
+                config.vol_fast_window = s["vol_fast_window"].asInt();
+            if (s.isMember("vol_regime_threshold"))
+                config.vol_regime_threshold = s["vol_regime_threshold"].asDouble();
+            if (s.isMember("vol_regime_spread_mult"))
+                config.vol_regime_spread_mult = s["vol_regime_spread_mult"].asDouble();
+            if (s.isMember("time_of_day_rules") && s["time_of_day_rules"].isArray()) {
+                for (const auto& rule : s["time_of_day_rules"]) {
+                    Config::TimeOfDayRule r;
+                    r.start_hour_utc = rule["start_hour_utc"].asInt();
+                    r.end_hour_utc = rule["end_hour_utc"].asInt();
+                    r.spread_multiplier = rule["spread_multiplier"].asDouble();
+                    config.time_of_day_rules.push_back(r);
+                }
+            }
         }
 
         // Performance settings

@@ -63,6 +63,14 @@ public:
         double quantity,
         const std::string& client_order_id = "");
 
+    std::optional<std::string> cancel_replace_order(
+        const std::string& symbol,
+        const std::string& cancel_order_id,
+        OrderSide side,
+        double price,
+        double quantity,
+        const std::string& client_order_id = "");
+
     std::optional<bool> cancel_order(
         const std::string& symbol,
         const std::string& order_id,

@@ -10,6 +10,7 @@
 #include "trading/volatility_tracker.h"
 #include "trading/avellaneda-stoikov-model.h"
 #include "trading/orderbook-imbalance-tracker.h"
+#include "trading/trade-flow-tracker.h"
 #include "cloud/gcp_publisher.h"
 #include "core/logger.h"
 #include "quill/Logger.h"
@@ -45,19 +46,24 @@ public:
     bool is_kill_switch_active() const;
     const std::string& get_symbol() const { return config_.symbol; }
     double get_spread_percentage() const {
-        std::lock_guard<std::mutex> lk(config_mutex_);
-        return config_.spread_percentage;
+        return atomic_spread_pct_.load(std::memory_order_relaxed);
     }
     std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>> get_active_orders() const;
 
     // Setters for gRPC remote config (thread-safe: called from gRPC thread)
     void set_spread_percentage(double val) {
+        atomic_spread_pct_.store(val, std::memory_order_relaxed);
         std::lock_guard<std::mutex> lk(config_mutex_);
         config_.spread_percentage = val;
     }
     void set_order_size(double val) {
         std::lock_guard<std::mutex> lk(config_mutex_);
         config_.order_size = val;
+    }
+    void set_obi_tilt_factor(double val) {
+        atomic_obi_tilt_factor_.store(val, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lk(config_mutex_);
+        config_.obi_tilt_factor = val;
     }
     void activate_kill_switch(const std::string& reason);
 
@@ -78,6 +84,7 @@ private:
     std::unique_ptr<AvellanedaStoikovModel> as_model_;  // Inventory-aware quoting
     std::chrono::steady_clock::time_point as_horizon_start_;  // Rolling window start
     std::unique_ptr<OrderBookImbalanceTracker> obi_tracker_;  // OBI spread tilting
+    std::unique_ptr<TradeFlowTracker> trade_flow_tracker_;   // Toxic flow detection
     std::shared_ptr<Logger> logger_;
     quill::Logger* quill_logger_ = nullptr;
     GcpPublisher* publisher_ = nullptr;  // non-owning, optional
@@ -100,6 +107,9 @@ private:
 
     std::atomic<double> current_mid_price_{0.0};
     std::atomic<bool> price_changed_{false};
+    // Hot-path config values: atomic to avoid mutex on every tick
+    std::atomic<double> atomic_spread_pct_{0.02};
+    std::atomic<double> atomic_obi_tilt_factor_{0.3};
     // Condition variable kept as idle-CPU fallback (hybrid: spin briefly, then block)
     std::condition_variable price_change_cv_;
     std::mutex price_change_mutex_;
@@ -114,6 +124,9 @@ private:
     // Core logic
     void main_loop();
     void check_and_update_orders();
+
+    // Spread multiplier based on UTC hour schedule
+    double get_time_of_day_multiplier() const;
 
     // Utilities
     bool validate_config();

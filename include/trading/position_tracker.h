@@ -20,6 +20,9 @@ public:
     // Called after a fill is confirmed
     void on_fill(OrderSide side, double price, double quantity);
 
+    // Set asymmetric limits (0 = use symmetric max_position_size for that side)
+    void set_asymmetric_limits(double max_long, double max_short);
+
     // Getters
     double get_position() const;
     double get_entry_value() const;
@@ -34,6 +37,8 @@ private:
     double current_position_ = 0.0;   // Net base asset (positive = long, negative = short)
     double entry_value_ = 0.0;        // Total cost basis
     double max_position_size_;         // Max absolute position allowed
+    double max_long_position_;         // Max long (defaults to max_position_size_)
+    double max_short_position_;        // Max short (defaults to max_position_size_)
 };
 
 } // namespace MarketMaker

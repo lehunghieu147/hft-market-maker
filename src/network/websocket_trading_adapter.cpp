@@ -297,6 +297,33 @@ std::optional<Order> WebSocketTradingAdapter::place_market_order(
     return order;
 }
 
+std::optional<Order> WebSocketTradingAdapter::cancel_replace_order(
+    const std::string& symbol,
+    const std::string& cancel_order_id,
+    OrderSide side,
+    double new_price,
+    double new_quantity,
+    const std::string& client_order_id) {
+
+    auto order_id = ws_trading_client_->cancel_replace_order(
+        symbol, cancel_order_id, side, new_price, new_quantity, client_order_id);
+
+    if (!order_id) {
+        return std::nullopt;
+    }
+
+    Order order;
+    order.order_id = *order_id;
+    order.client_order_id = client_order_id;
+    order.symbol = symbol;
+    order.side = side;
+    order.price = new_price;
+    order.quantity = new_quantity;
+    order.status = OrderStatus::NEW;
+    order.created_time = std::chrono::steady_clock::now();
+    return order;
+}
+
 std::optional<bool> WebSocketTradingAdapter::cancel_order(
     const std::string& symbol,
     const std::string& order_id) {

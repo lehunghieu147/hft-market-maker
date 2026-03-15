@@ -137,6 +137,18 @@ public:
     virtual double format_price(double price, const std::string& symbol) = 0;
     virtual double format_quantity(double quantity, const std::string& symbol) = 0;
 
+    // Cancel existing order and place new one atomically (if supported)
+    [[nodiscard]] virtual std::optional<Order> cancel_replace_order(
+        [[maybe_unused]] const std::string& symbol,
+        [[maybe_unused]] const std::string& cancel_order_id,
+        [[maybe_unused]] OrderSide side,
+        [[maybe_unused]] double new_price,
+        [[maybe_unused]] double new_quantity,
+        [[maybe_unused]] const std::string& client_order_id = ""
+    ) { return std::nullopt; }
+
+    virtual bool supports_cancel_replace() const { return false; }
+
     // Get exchange-specific limits
     virtual double get_min_order_size(const std::string& symbol) = 0;
     virtual double get_max_order_size(const std::string& symbol) = 0;

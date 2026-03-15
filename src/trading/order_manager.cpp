@@ -9,7 +9,9 @@ namespace MarketMaker {
 
 OrderManager::OrderManager(std::shared_ptr<IExchange> exchange, const Config& config,
                            std::shared_ptr<RiskManager> risk_manager)
-    : exchange_(exchange), config_(config), risk_manager_(risk_manager) {
+    : exchange_(exchange), config_(config), risk_manager_(risk_manager)
+    , price_multiplier_(std::pow(10, config.price_precision))
+    , qty_multiplier_(std::pow(10, config.quantity_precision)) {
     logger_ = AppLogger::get("trading");
     metrics_.start_time = std::chrono::steady_clock::now();
 }
@@ -78,26 +80,20 @@ bool OrderManager::place_market_maker_orders_with_prices(double mid_price, doubl
     {
         std::lock_guard<std::mutex> lock(orders_mutex_);
 
-        if (!active_bid_order_ || !active_ask_order_) {
+        if (active_bid_orders_.empty() || active_ask_orders_.empty()) {
             need_update = true;
             LOG_DEBUG(logger_, "{}", "No active orders, placing new ones");
         } else {
             double price_change_ratio = std::abs(mid_price - last_mid_price_) / last_mid_price_;
             if (price_change_ratio > PRICE_CHANGE_THRESHOLD) {
                 need_update = true;
-                LOG_DEBUG(logger_, "Price change {:.5f}% exceeds threshold, updating orders",
-                          price_change_ratio * 100);
             } else {
-                LOG_DEBUG(logger_, "Price change {:.5f}% below threshold, skipping update",
-                          price_change_ratio * 100);
                 return true; // Skip update
             }
         }
     }
 
-    if (!need_update) {
-        return true;
-    }
+    if (!need_update) return true;
 
     // Risk management gate
     if (risk_manager_ && !risk_manager_->should_trade()) {
@@ -113,7 +109,7 @@ bool OrderManager::place_market_maker_orders_with_prices(double mid_price, doubl
         return false;
     }
 
-    // Position limit check (atomic pair check under single lock)
+    // Position limit check
     if (risk_manager_) {
         if (!risk_manager_->position_tracker().can_place_pair(order_size, order_size)) {
             LOG_ERROR(logger_, "{}", "Position limit would be exceeded");
@@ -121,88 +117,82 @@ bool OrderManager::place_market_maker_orders_with_prices(double mid_price, doubl
         }
     }
 
-    LOG_INFO(logger_, "[ORDER]      BID ${:.2f} x {} | ASK ${:.2f} x {}",
-             bid_price, order_size, ask_price, order_size);
+    LOG_INFO(logger_, "[ORDER]      BID ${:.2f} x {} | ASK ${:.2f} x {} (levels={})",
+             bid_price, order_size, ask_price, order_size, config_.num_quote_levels);
 
-    bool bid_success = false;
-    bool ask_success = false;
-
-    auto t3 = std::chrono::steady_clock::now();
-
-    // Copy orders outside of lock to minimize critical section
-    std::shared_ptr<Order> bid_order_to_cancel;
-    std::shared_ptr<Order> ask_order_to_cancel;
+    // Snapshot and cancel all existing orders via thread pool
+    std::vector<std::shared_ptr<Order>> orders_to_cancel;
     {
         std::lock_guard<std::mutex> lock(orders_mutex_);
-        bid_order_to_cancel = active_bid_order_;
-        ask_order_to_cancel = active_ask_order_;
+        orders_to_cancel.insert(orders_to_cancel.end(), active_bid_orders_.begin(), active_bid_orders_.end());
+        orders_to_cancel.insert(orders_to_cancel.end(), active_ask_orders_.begin(), active_ask_orders_.end());
     }
 
-    // Cancel orders in parallel
-    std::vector<std::future<bool>> cancel_futures;
-
-    if (bid_order_to_cancel) {
-        cancel_futures.push_back(std::async(std::launch::async, [this, bid_order_to_cancel]() {
-            return cancel_order(bid_order_to_cancel);
-        }));
-    }
-
-    if (ask_order_to_cancel) {
-        cancel_futures.push_back(std::async(std::launch::async, [this, ask_order_to_cancel]() {
-            return cancel_order(ask_order_to_cancel);
-        }));
-    }
-
-    constexpr auto timeout = std::chrono::milliseconds(100);
-    for (size_t i = 0; i < cancel_futures.size(); ++i) {
-        if (cancel_futures[i].wait_for(timeout) == std::future_status::ready) {
-            cancel_futures[i].get();
-        } else {
-            LOG_WARNING(logger_, "{}", "Cancel order timeout after 100ms");
+    if (!orders_to_cancel.empty()) {
+        std::vector<std::future<bool>> cancel_futures;
+        for (auto& order : orders_to_cancel) {
+            cancel_futures.push_back(thread_pool_.submit([this, order]() {
+                return cancel_order(order);
+            }));
         }
-    }
-
-    // Clear active orders after cancellation
-    {
+        constexpr auto timeout = std::chrono::milliseconds(100);
+        for (auto& f : cancel_futures) {
+            if (f.wait_for(timeout) == std::future_status::ready) {
+                f.get();
+            } else {
+                LOG_WARNING(logger_, "{}", "Cancel order timeout after 100ms");
+            }
+        }
         std::lock_guard<std::mutex> lock(orders_mutex_);
-        if (bid_order_to_cancel) active_bid_order_.reset();
-        if (ask_order_to_cancel) active_ask_order_.reset();
+        active_bid_orders_.clear();
+        active_ask_orders_.clear();
     }
 
-    auto t4 = std::chrono::steady_clock::now();
-    LOG_DEBUG(logger_, "Cancel orders latency: {}us",
-              std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count());
+    // Place multi-level orders via thread pool
+    int levels = std::max(1, config_.num_quote_levels);
+    double bid_distance = mid_price - bid_price;  // positive distance from mid
+    double ask_distance = ask_price - mid_price;
 
-    // Place new orders in parallel threads
-    auto t5 = std::chrono::steady_clock::now();
-    std::thread bid_thread([this, bid_price, order_size, &bid_success]() {
-        bid_success = place_order(OrderSide::BUY, bid_price, order_size);
-    });
+    std::vector<std::future<bool>> place_futures;
+    for (int i = 0; i < levels; ++i) {
+        double level_mult = (i == 0) ? 1.0 : std::pow(config_.level_spacing_multiplier, i);
+        double level_size = format_quantity(order_size * std::pow(config_.level_size_decay, i));
+        if (level_size < 1e-8) break;
 
-    std::thread ask_thread([this, ask_price, order_size, &ask_success]() {
-        ask_success = place_order(OrderSide::SELL, ask_price, order_size);
-    });
+        double level_bid = format_price(mid_price - bid_distance * level_mult);
+        double level_ask = format_price(mid_price + ask_distance * level_mult);
 
-    bid_thread.join();
-    ask_thread.join();
-    auto t6 = std::chrono::steady_clock::now();
-    LOG_DEBUG(logger_, "Total thread execution: {}us",
-              std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count());
+        place_futures.push_back(thread_pool_.submit([this, level_bid, level_size]() {
+            return place_order(OrderSide::BUY, level_bid, level_size);
+        }));
+        place_futures.push_back(thread_pool_.submit([this, level_ask, level_size]() {
+            return place_order(OrderSide::SELL, level_ask, level_size);
+        }));
+    }
+
+    int successes = 0;
+    int total = static_cast<int>(place_futures.size());
+    for (auto& f : place_futures) {
+        if (f.get()) successes++;
+    }
 
     last_mid_price_ = mid_price;
     last_order_update_ = std::chrono::steady_clock::now();
 
-    if (bid_success && ask_success) {
-        LOG_INFO(logger_, "{}", "[ORDER]      Both orders placed OK");
-    } else if (bid_success || ask_success) {
-        LOG_WARNING(logger_, "Partial: Only {} order placed", bid_success ? "BID" : "ASK");
+    bool bid_success = successes > 0;
+    bool ask_success = successes > 0;
+
+    if (successes == total) {
+        LOG_INFO(logger_, "[ORDER]      All {} orders placed OK", total);
+    } else if (successes > 0) {
+        LOG_WARNING(logger_, "Partial: {}/{} orders placed", successes, total);
     } else {
         LOG_ERROR(logger_, "{}", "FAILED: No orders were placed");
     }
 
     update_metrics(start_time, orderbook_time, bid_success, ask_success);
 
-    return bid_success && ask_success;
+    return successes == total;
 }
 
 bool OrderManager::place_taker_order(OrderSide side, double price, double quantity,
@@ -248,42 +238,31 @@ bool OrderManager::place_taker_order(OrderSide side, double price, double quanti
 }
 
 bool OrderManager::cancel_all_active_orders() {
-    // Copy orders outside lock to avoid holding mutex during network I/O
-    std::shared_ptr<Order> bid_copy;
-    std::shared_ptr<Order> ask_copy;
+    // Snapshot orders outside lock to avoid holding mutex during network I/O
+    std::vector<std::shared_ptr<Order>> all_orders;
     {
         std::lock_guard<std::mutex> lock(orders_mutex_);
-        bid_copy = active_bid_order_;
-        ask_copy = active_ask_order_;
+        all_orders.insert(all_orders.end(), active_bid_orders_.begin(), active_bid_orders_.end());
+        all_orders.insert(all_orders.end(), active_ask_orders_.begin(), active_ask_orders_.end());
     }
 
-    // Cancel both orders in parallel (no lock held)
+    // Cancel all orders in parallel via thread pool
     std::vector<std::future<bool>> cancel_futures;
-
-    if (bid_copy) {
-        cancel_futures.push_back(std::async(std::launch::async,
-            [this, order = bid_copy]() {
-                return cancel_order(order);
-            }));
-    }
-
-    if (ask_copy) {
-        cancel_futures.push_back(std::async(std::launch::async,
-            [this, order = ask_copy]() {
-                return cancel_order(order);
-            }));
+    for (auto& order : all_orders) {
+        cancel_futures.push_back(thread_pool_.submit([this, order]() {
+            return cancel_order(order);
+        }));
     }
 
     bool success = true;
-    for (auto& future : cancel_futures) {
-        success &= future.get();
+    for (auto& f : cancel_futures) {
+        success &= f.get();
     }
 
-    // Clear active orders after cancellation
     {
         std::lock_guard<std::mutex> lock(orders_mutex_);
-        active_bid_order_.reset();
-        active_ask_order_.reset();
+        active_bid_orders_.clear();
+        active_ask_orders_.clear();
     }
 
     return success;
@@ -314,7 +293,9 @@ bool OrderManager::update_orders_if_needed(double new_mid_price, const std::chro
 
 std::pair<std::shared_ptr<Order>, std::shared_ptr<Order>> OrderManager::get_active_orders() const {
     std::lock_guard<std::mutex> lock(orders_mutex_);
-    return {active_bid_order_, active_ask_order_};
+    auto bid = active_bid_orders_.empty() ? nullptr : active_bid_orders_.front();
+    auto ask = active_ask_orders_.empty() ? nullptr : active_ask_orders_.front();
+    return {bid, ask};
 }
 
 LatencyMetrics OrderManager::get_metrics() const {
@@ -329,13 +310,11 @@ void OrderManager::reset_metrics() {
 }
 
 double OrderManager::format_price(double price) const {
-    double multiplier = std::pow(10, config_.price_precision);
-    return std::round(price * multiplier) / multiplier;
+    return std::round(price * price_multiplier_) / price_multiplier_;
 }
 
 double OrderManager::format_quantity(double quantity) const {
-    double multiplier = std::pow(10, config_.quantity_precision);
-    return std::round(quantity * multiplier) / multiplier;
+    return std::round(quantity * qty_multiplier_) / qty_multiplier_;
 }
 
 bool OrderManager::place_order(OrderSide side, double price, double quantity) {
@@ -362,9 +341,9 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
 
     std::lock_guard<std::mutex> lock(orders_mutex_);
     if (side == OrderSide::BUY) {
-        active_bid_order_ = make_pooled_order(*order_result);
+        active_bid_orders_.push_back(make_pooled_order(*order_result));
     } else {
-        active_ask_order_ = make_pooled_order(*order_result);
+        active_ask_orders_.push_back(make_pooled_order(*order_result));
     }
 
     LOG_DEBUG(logger_, "Placed {} order: ID={} Price={:.2f} Qty={:.4f}",
@@ -436,6 +415,10 @@ void OrderManager::update_metrics(const std::chrono::steady_clock::time_point& s
 
     MetricsCollector::instance().observe("order_latency_ms", execution_latency_ms);
 
+    // Record into percentile trackers
+    exec_latency_tracker_.record(execution_latency_us);
+    reaction_latency_tracker_.record(reaction_latency_us);
+
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     metrics_.update_latency(execution_latency_ms);
     metrics_.update_reaction_latency(reaction_latency_ms);
@@ -443,6 +426,26 @@ void OrderManager::update_metrics(const std::chrono::steady_clock::time_point& s
 
     LOG_DEBUG(logger_, "LATENCY reaction={:.3f}ms exec={:.3f}ms",
               reaction_latency_ms, execution_latency_ms);
+}
+
+OrderManager::PercentileMetrics OrderManager::get_exec_percentiles() const {
+    return {
+        exec_latency_tracker_.percentile(0.50) / 1000.0,
+        exec_latency_tracker_.percentile(0.95) / 1000.0,
+        exec_latency_tracker_.percentile(0.99) / 1000.0,
+        exec_latency_tracker_.max() / 1000.0,
+        exec_latency_tracker_.count()
+    };
+}
+
+OrderManager::PercentileMetrics OrderManager::get_reaction_percentiles() const {
+    return {
+        reaction_latency_tracker_.percentile(0.50) / 1000.0,
+        reaction_latency_tracker_.percentile(0.95) / 1000.0,
+        reaction_latency_tracker_.percentile(0.99) / 1000.0,
+        reaction_latency_tracker_.max() / 1000.0,
+        reaction_latency_tracker_.count()
+    };
 }
 
 std::string OrderManager::generate_client_order_id(OrderSide side) {
@@ -463,21 +466,24 @@ void OrderManager::on_fill_event(const std::string& order_id,
                                  double price,
                                  double quantity,
                                  double /*cumulative_quantity*/) {
-    // Always update order state, regardless of risk_manager presence
+    // Update order state in active order vectors
     {
         std::lock_guard<std::mutex> lock(orders_mutex_);
-        if (active_bid_order_ && active_bid_order_->order_id == order_id) {
-            active_bid_order_->status = status;
-            active_bid_order_->executed_quantity += quantity;
-            if (status == OrderStatus::FILLED || status == OrderStatus::CANCELED) {
-                active_bid_order_.reset();
+        auto update_vec = [&](std::vector<std::shared_ptr<Order>>& vec) -> bool {
+            for (auto it = vec.begin(); it != vec.end(); ++it) {
+                if ((*it)->order_id == order_id) {
+                    (*it)->status = status;
+                    (*it)->executed_quantity += quantity;
+                    if (status == OrderStatus::FILLED || status == OrderStatus::CANCELED) {
+                        vec.erase(it);
+                    }
+                    return true;
+                }
             }
-        } else if (active_ask_order_ && active_ask_order_->order_id == order_id) {
-            active_ask_order_->status = status;
-            active_ask_order_->executed_quantity += quantity;
-            if (status == OrderStatus::FILLED || status == OrderStatus::CANCELED) {
-                active_ask_order_.reset();
-            }
+            return false;
+        };
+        if (!update_vec(active_bid_orders_)) {
+            update_vec(active_ask_orders_);
         }
     }
 

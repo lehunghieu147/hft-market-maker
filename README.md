@@ -81,20 +81,25 @@ config/            # JSON configuration files
 ## Key Features
 
 ### Risk Management
-- **Position limits**: Configurable max position size with atomic pair checks
+- **Position limits**: Configurable max position size with per-side asymmetric limits (`max_long_position`, `max_short_position`)
 - **Daily loss limit**: Automatic trading halt when daily P&L breaches threshold
-- **Max drawdown**: Peak-to-trough drawdown monitoring
+- **Max drawdown**: Peak-to-trough drawdown monitoring with drawdown-aware spread widening
 - **Kill switch**: Emergency stop with manual reset
 - **Consecutive error tracking**: Auto-halt after N consecutive failures
 - **Fee-aware P&L**: Supports signed maker rebates (negative fees = rebate)
+- **Toxic flow detection**: Widen spread when fills are one-sided (`use_toxic_flow_detection`)
+- **Time-of-day rules**: Schedule-based spread multipliers for specific market hours
 
 ### Trading Strategy
 - **Market making**: Simultaneous BID/ASK orders around VWAP mid-price
 - **Volatility-adjusted spreads**: Spread scales with market volatility
+- **Multi-level quoting**: Place N levels per side at staggered prices/sizes (`num_quote_levels`)
+- **Inventory skew**: Bias pricing to revert position toward neutral (non-Avellaneda mode)
 - **Orderbook depth analysis**: VWAP mid price from top N levels
-- **Imbalance ratio**: Bid/ask volume imbalance detection
+- **Imbalance ratio**: Bid/ask volume imbalance detection with OBI-based spread tilting
 - **Price change threshold**: Skip updates for insignificant price moves (< 0.01%)
 - **Stale data rejection**: Reject orderbook updates older than 5 seconds
+- **Volatility regime detection**: Dual-window volatility tracking for regime-aware spreads
 
 ### Real-Time Fill Tracking
 - **Binance WS API User Data**: Integrated on same WebSocket connection as order execution
@@ -216,7 +221,10 @@ The bot uses JSON configuration files in `config/` directory:
 |-----------|---------|-------------|
 | `max_daily_loss` | -100.0 | Daily loss threshold (negative USDT). Trading halts when breached |
 | `max_position_size` | 0.5 | Maximum absolute net position (base currency) |
+| `max_long_position` | 0.0 | Max long position (0 = use symmetric `max_position_size` for both sides) |
+| `max_short_position` | 0.0 | Max short position (0 = use symmetric `max_position_size` for both sides) |
 | `max_drawdown` | -500.0 | Peak-to-trough drawdown limit (negative USDT) |
+| `max_drawdown_spread_multiplier` | 0.0 | Spread multiplier at max drawdown (0 = disabled). At breach, spread *= (1 + value) |
 | `max_consecutive_errors` | 5 | Kill switch triggers after N consecutive order failures |
 | `maker_fee_rate` | -0.0001 | Maker fee rate (negative = rebate). Binance VIP0: -0.01% |
 | `taker_fee_rate` | 0.001 | Taker fee rate. Binance VIP0: 0.1% |
@@ -244,6 +252,66 @@ nohup ./build/bin/market_maker config/config.json > output.log 2>&1 &
 
 # Stop: Ctrl+C (graceful shutdown)
 ```
+
+## Advanced Strategy Configuration
+
+### Multi-Level Quoting
+Place multiple bid/ask levels at staggered prices to capture different price levels.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `num_quote_levels` | 1 | Number of quote levels per side (1 = standard single pair) |
+| `level_spacing_multiplier` | 1.5 | Each level spreads *= this^level (higher = wider spacing) |
+| `level_size_decay` | 0.5 | Each level size *= this^level (higher = more aggressive) |
+
+**Example**: With 3 levels, spacing=1.5, decay=0.5:
+- Level 1: spread=0.02%, size=0.001
+- Level 2: spread=0.03%, size=0.0005
+- Level 3: spread=0.045%, size=0.00025
+
+### Inventory Skew (Non-AS Mode)
+Mean-revert position toward neutral by biasing bid/ask prices (alternative to Avellaneda-Stoikov).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `inventory_skew_factor` | 0.0 | Skew magnitude (0 = disabled, typical: 0.1-0.5) |
+
+When long, bid spread is reduced and ask spread is increased to encourage selling. Aggressive mean-reversion at factor=0.5.
+
+### Toxic Flow Detection
+Widen spread when recent fills are heavily one-sided (indicates adverse flow).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `use_toxic_flow_detection` | false | Enable toxic flow detection |
+| `toxic_flow_window` | 50 | Rolling window of recent fills |
+| `toxic_flow_threshold` | 0.7 | Trigger when one-sided % >= threshold (0.7 = 70%) |
+| `toxic_flow_spread_mult` | 1.5 | Spread multiplier when triggered |
+
+### Time-of-Day Rules
+Apply different spread multipliers during specific market hours.
+
+```json
+"time_of_day_rules": [
+  {"start_hour_utc": 8, "end_hour_utc": 14, "spread_multiplier": 1.0},   // Peak hours, tight spreads
+  {"start_hour_utc": 14, "end_hour_utc": 20, "spread_multiplier": 1.5},  // Evening, wider spreads
+  {"start_hour_utc": 20, "end_hour_utc": 8, "spread_multiplier": 2.0}    // Night, conservative
+]
+```
+
+### Dual-Window Volatility Regime
+Detect high-volatility regimes by comparing fast vs slow volatility windows.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `vol_fast_window` | 20 | Fast volatility window (number of ticks) |
+| `vol_regime_threshold` | 2.0 | When `vol_fast / vol_slow >= threshold`, apply regime multiplier |
+| `vol_regime_spread_mult` | 2.0 | Spread multiplier during high-vol regime |
+
+### Spread Multiplier Stacking
+Multiple multipliers (toxic flow, drawdown, regime, time-of-day) are stacked with a **5x hard cap** to prevent excessive widening:
+
+`final_spread = base_spread * min(5.0, toxic_mult * drawdown_mult * regime_mult * time_mult)`
 
 ## Momentum Taker Bot
 
@@ -294,8 +362,10 @@ This prevents executing signals where the edge doesn't cover trading costs. Set 
 
 The bot tracks and reports every 30 seconds:
 
-- **Reaction Latency**: Time from orderbook update to order placement (target: < 50ms)
+- **Reaction Latency**: Time from orderbook update to order placement
+  - P50 / P95 / P99 percentiles (target: P50 < 50ms, P99 < 100ms)
 - **Execution Latency**: Time to execute the order placement function
+  - P50 / P95 / P99 percentiles
 - **Order Success Rate**: Successful / total orders
 - **Position**: Current net position in base currency
 - **Daily P&L**: Realized profit/loss for the day

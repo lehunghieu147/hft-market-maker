@@ -62,6 +62,42 @@ public:
         };
     }
 
+    // GLFT extension: Guéant-Lehalle-Fernandez-Tapia
+    // Adds inventory penalty that widens quotes as position approaches max_inventory
+    ASQuoteResult compute_glft(double mid_price, double inventory,
+                                double volatility, double time_remaining_sec,
+                                double max_inventory) const {
+        double tau = std::max(time_remaining_sec / time_horizon_sec_, 0.001);
+        double sigma_sq = volatility * volatility;
+
+        // Reservation price (same as vanilla AS)
+        double reservation_price = mid_price - inventory * gamma_ * sigma_sq * tau;
+
+        // Base optimal spread
+        double base_spread = gamma_ * sigma_sq * tau
+                           + (2.0 / gamma_) * std::log(1.0 + gamma_ / kappa_);
+
+        // Inventory penalty: widens as |inventory| -> max_inventory
+        // penalty = 1 / (1 - (q/Q)^2), diverges at limits
+        double inv_ratio = (max_inventory > 0)
+            ? std::clamp(inventory / max_inventory, -0.99, 0.99)
+            : 0.0;
+        double penalty = 1.0 / (1.0 - inv_ratio * inv_ratio);
+
+        double half_spread = std::max(base_spread * penalty / 2.0, mid_price * 1e-6);
+
+        // Asymmetric: when long, widen bid more (discourage buying)
+        double bid_extra = (inventory > 0) ? inv_ratio * inv_ratio * half_spread * 0.5 : 0.0;
+        double ask_extra = (inventory < 0) ? inv_ratio * inv_ratio * half_spread * 0.5 : 0.0;
+
+        return ASQuoteResult{
+            reservation_price - half_spread - bid_extra,
+            reservation_price + half_spread + ask_extra,
+            reservation_price,
+            base_spread * penalty
+        };
+    }
+
     // Getters for parameters (useful for logging/debugging)
     double gamma() const { return gamma_; }
     double kappa() const { return kappa_; }

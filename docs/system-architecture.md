@@ -9,28 +9,35 @@ C++17 HFT trading system for Binance with multi-exchange abstraction. Contains t
 
 ## Component Diagram
 
-### Market Maker Bot (Enhanced)
+### Market Maker Bot (Enhanced - Phase C)
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      MarketMakerBot                         │
-│  - main_loop (price change -> order update)                 │
-│  - VWAP mid price from orderbook depth                      │
-│  - volatility feed to VolatilityTracker                     │
-├────────┬─────────┬──────────┬──────────┬────────────────────┤
-│ Order  │ Risk    │Volatility│  VWAP   │WebSocket Trading   │
-│Manager │Manager  │ Tracker  │ Tracker │(Order+User Data)   │
-├────────┼─────────┼──────────┼──────────┼────────────────────┤
-│        │         │ Welford's│ Welford │executionReport →   │
-│Avellan │Position │ online  │+ stdev  │on_fill_event()     │
-│eda-    │Tracker  │ algorithm│ bands   │outboundAccountPos  │
-│Stoikov │        │         │         │WS ping/pong (20s)  │
-│(if en) │├────────┤         │         │                    │
-│        ││PnL Trk │         │         │                    │
-│        │└────────┴─────────┴─────────┘                    │
-│OBI Tilt│  (OBI Tracker: bid_vol/ask_vol imbalance)       │
-│(if en) │                                                 │
-│        │  Dynamic Sizing: vol_sizing_exponent config      │
-└────────┴──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      MarketMakerBot                          │
+│  - main_loop (price change -> order update)                  │
+│  - VWAP mid price from orderbook depth                       │
+│  - volatility feed to VolatilityTracker (dual-window regime) │
+├───────────┬──────────┬────────────┬──────────┬───────────────┤
+│ Order     │ Risk     │Volatility  │  VWAP   │WebSocket      │
+│Manager    │Manager   │ Tracker    │ Tracker │Trading API    │
+│(ThreadPool)│         │(Welford's) │(Welford)│(Order+User)   │
+├───────────┼──────────┼────────────┼──────────┼───────────────┤
+│           │          │ Fast EMA   │Welford  │execution      │
+│Inventory  │Position  │ Slow EMA   │+ stdev  │Report →       │
+│Skew       │Tracker   │ Regime     │+ bands  │on_fill_event()│
+│(if en)    │(Per-side │ Detection  │         │outboundAcct   │
+│           │limits)   │            │         │WS ping (20s)  │
+│Avellan.   │├─────────┤            │         │               │
+│eda-       ││PnL Trk  │            │         │               │
+│Stoikov    │├────────┤├────────────┼──────────┤               │
+│(GLFT opt) ││Drawdown│ Toxic Flow│ Time-Day │               │
+│           ││Spread  │ Detection  │ Rules &  │               │
+│           ││WidenM. │ (if en)    │ ToD Mux  │               │
+│OBI Tilt   ││        ├────────────┼──────────┤               │
+│(if en)    ││        │Multi-Level │Spread    │               │
+│           ││        │Quoting     │Stacking  │               │
+│Dyn Sizing ││        │(if N>1)    │(5x cap)  │               │
+│(if en)    │└────────┴────────────┴──────────┘               │
+└───────────┴──────────────────────────────────────────────────┘
 
 ### Momentum Taker Bot (Enhanced)
 ┌─────────────────────────────────────────────────────────────┐
@@ -137,7 +144,8 @@ C++17 HFT trading system for Binance with multi-exchange abstraction. Contains t
 | `main_thread_` | Trading loop (market maker: price change → order update; momentum: signal → order exec) |
 | WebSocket thread | Market data reception (orderbook) |
 | WS Trading thread | Order execution responses + user data events (single connection) |
-| Async cancel/place | `std::thread` for parallel order ops (market maker only) |
+| Thread pool | Order cancel/place operations with batch `cancelReplace` (replaces std::async) |
+| Quill backend | Async logging I/O (lock-free, ~1-5µs per call) |
 
 ### Synchronization
 - `orderbook_mutex_`: Protects `current_orderbook_`, `last_orderbook_time_`
@@ -236,6 +244,76 @@ strategy:
   vol_sizing_exponent: 0.5          # Power for scaling (0.5 = sqrt)
   min_size_multiplier: 0.5          # Min size relative to base
   max_size_multiplier: 2.0          # Max size relative to base
+```
+
+### Phase C Enhanced Strategy Configuration
+
+#### Inventory Skew (Non-AS Alternative)
+```yaml
+strategy:
+  inventory_skew_factor: 0.2        # Mean-revert position (0 = disabled, 0.1-0.5 typical)
+```
+
+#### Multi-Level Quoting
+```yaml
+strategy:
+  num_quote_levels: 3               # Number of levels per side (1 = single bid/ask)
+  level_spacing_multiplier: 1.5     # Each level spread *= this^level
+  level_size_decay: 0.5             # Each level size *= this^level
+```
+
+#### Toxic Flow Detection
+```yaml
+strategy:
+  use_toxic_flow_detection: true    # Widen spread on one-sided fills
+  toxic_flow_window: 50             # Rolling window of recent fills
+  toxic_flow_threshold: 0.7         # Trigger when one-sided % >= 70%
+  toxic_flow_spread_mult: 1.5       # Spread multiplier when triggered
+```
+
+#### GLFT Extension
+```yaml
+strategy:
+  use_glft: true                    # GLFT adds inventory penalty near position limits
+```
+
+#### Dual-Window Volatility Regime Detection
+```yaml
+strategy:
+  vol_fast_window: 20               # Fast volatility window
+  vol_regime_threshold: 2.0         # When vol_fast/vol_slow >= 2.0, apply mult
+  vol_regime_spread_mult: 2.0       # Spread multiplier during high-vol regime
+```
+
+#### Per-Side Position Limits (Asymmetric)
+```yaml
+risk:
+  max_long_position: 1.0            # Max long position (0 = symmetric to max_position_size)
+  max_short_position: 0.5           # Max short position (e.g., more conservative on shorts)
+```
+
+#### Drawdown-Based Spread Widening
+```yaml
+risk:
+  max_drawdown_spread_multiplier: 1.0  # At max_drawdown, spread *= (1 + 1.0) = 2x
+```
+
+#### Time-of-Day Spread Rules
+```yaml
+risk:
+  time_of_day_rules:
+    - start_hour_utc: 8
+      end_hour_utc: 14
+      spread_multiplier: 1.0        # Tight spreads during peak hours
+    - start_hour_utc: 14
+      end_hour_utc: 20
+      spread_multiplier: 1.5        # Wider spreads in evening
+```
+
+#### Spread Multiplier Stacking (5x Hard Cap)
+```
+final_spread = base_spread * min(5.0,
+  toxic_mult * drawdown_mult * regime_mult * time_mult)
 ```
 
 ### Precision Settings

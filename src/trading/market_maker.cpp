@@ -13,6 +13,9 @@ namespace MarketMaker {
 MarketMakerBot::MarketMakerBot(const Config& config) : config_(config) {
     logger_ = std::make_shared<Logger>(config.log_file);
     quill_logger_ = AppLogger::get("trading");
+    // Init hot-path atomics from config
+    atomic_spread_pct_.store(config.spread_percentage, std::memory_order_relaxed);
+    atomic_obi_tilt_factor_.store(config.obi_tilt_factor, std::memory_order_relaxed);
 }
 
 MarketMakerBot::~MarketMakerBot() {
@@ -49,7 +52,15 @@ bool MarketMakerBot::initialize() {
     risk_config.max_consecutive_errors = config_.max_consecutive_errors;
     risk_config.maker_fee_rate = config_.maker_fee_rate;
     risk_config.taker_fee_rate = config_.taker_fee_rate;
+    risk_config.max_drawdown_spread_multiplier = config_.max_drawdown_spread_multiplier;
     risk_manager_ = std::make_shared<RiskManager>(risk_config);
+
+    // Per-side position limits (0 = use symmetric max_position_size)
+    if (config_.max_long_position > 0 || config_.max_short_position > 0) {
+        risk_manager_->position_tracker().set_asymmetric_limits(
+            config_.max_long_position > 0 ? config_.max_long_position : config_.max_position_size,
+            config_.max_short_position > 0 ? config_.max_short_position : config_.max_position_size);
+    }
     LOG_INFO(quill_logger_, "[4/8] Risk manager: max_pos={:.2f} max_loss=${:.0f} max_drawdown=${:.0f} OK",
              config_.max_position_size, config_.max_daily_loss, config_.max_drawdown);
 
@@ -57,9 +68,12 @@ bool MarketMakerBot::initialize() {
     order_manager_ = std::make_shared<OrderManager>(exchange_, config_, risk_manager_);
     LOG_INFO(quill_logger_, "{}", "[5/8] Order manager: ObjectPool<Order>(128) pre-allocated OK");
 
-    // Initialize volatility tracker
-    volatility_tracker_ = std::make_shared<VolatilityTracker>(100, 0.001, 0.05);
-    LOG_INFO(quill_logger_, "{}", "[6/8] Volatility tracker: window=100 range=[0.1%, 5.0%] OK");
+    // Initialize volatility tracker (with fast window for regime detection)
+    volatility_tracker_ = std::make_shared<VolatilityTracker>(
+        100, 0.001, 0.05,
+        config_.vol_fast_window, config_.vol_regime_threshold, config_.vol_regime_spread_mult);
+    LOG_INFO(quill_logger_, "[6/8] Volatility tracker: window=100 fast={} range=[0.1%, 5.0%] OK",
+             config_.vol_fast_window);
 
     // Wire volatility tracker into risk manager for dynamic sizing
     if (config_.use_dynamic_sizing && risk_manager_) {
@@ -87,6 +101,16 @@ bool MarketMakerBot::initialize() {
                      std::to_string(config_.obi_tilt_factor) + ")");
     }
 
+    // Initialize toxic flow tracker if enabled
+    if (config_.use_toxic_flow_detection) {
+        trade_flow_tracker_ = std::make_unique<TradeFlowTracker>(
+            config_.toxic_flow_window, config_.toxic_flow_threshold,
+            config_.toxic_flow_spread_mult);
+        logger_->log(LogLevel::INFO, "Toxic flow detection enabled (window=" +
+                     std::to_string(config_.toxic_flow_window) + " threshold=" +
+                     std::to_string(config_.toxic_flow_threshold) + ")");
+    }
+
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     std::cout << "\n▸ PHASE 4: Event Wiring & Services" << std::endl;
 
@@ -98,6 +122,10 @@ bool MarketMakerBot::initialize() {
                    double price, double qty, double cum_qty) {
                 order_manager_->on_fill_event(order_id, client_order_id,
                                               side, status, price, qty, cum_qty);
+                // Feed toxic flow tracker
+                if (trade_flow_tracker_ && qty > 0) {
+                    trade_flow_tracker_->on_fill(side == OrderSide::BUY);
+                }
                 // Publish fill event to GCP Pub/Sub
                 Json::Value d;
                 d["order_id"] = order_id;
@@ -261,13 +289,19 @@ void MarketMakerBot::check_and_update_orders() {
         return;
     }
 
-    // Snapshot mutable config fields under lock (written by gRPC thread)
-    double spread_pct, obi_tilt_factor;
-    {
-        std::lock_guard<std::mutex> lk(config_mutex_);
-        spread_pct      = config_.spread_percentage;
-        obi_tilt_factor = config_.obi_tilt_factor;
-    }
+    // Read hot-path config via atomics (no mutex on tick path)
+    double spread_pct = atomic_spread_pct_.load(std::memory_order_relaxed);
+    double obi_tilt_factor = atomic_obi_tilt_factor_.load(std::memory_order_relaxed);
+
+    // Stack all spread multipliers (cap at 5x to prevent runaway widening)
+    double drawdown_mult = (risk_manager_ && config_.max_drawdown_spread_multiplier > 0.0)
+        ? risk_manager_->get_drawdown_spread_multiplier(mid_price) : 1.0;
+    double tod_mult = get_time_of_day_multiplier();
+    double toxic_mult = trade_flow_tracker_ ? trade_flow_tracker_->get_spread_multiplier() : 1.0;
+    double regime_mult = volatility_tracker_ ? volatility_tracker_->get_regime_spread_multiplier() : 1.0;
+
+    double total_mult = std::min(drawdown_mult * tod_mult * toxic_mult * regime_mult, 5.0);
+    spread_pct *= total_mult;
 
     // Drain ring buffer, use the latest orderbook timestamp for latency tracking
     auto latest = orderbook_ring_.drain_latest();
@@ -298,7 +332,9 @@ void MarketMakerBot::check_and_update_orders() {
             as_horizon_start_ = now;
         }
 
-        auto quote = as_model_->compute(mid_price, inventory, volatility, time_remaining);
+        auto quote = config_.use_glft
+            ? as_model_->compute_glft(mid_price, inventory, volatility, time_remaining, config_.max_position_size)
+            : as_model_->compute(mid_price, inventory, volatility, time_remaining);
 
         // Apply OBI tilt: positive OBI (buy pressure) -> tighten bid, widen ask
         double bid_price = quote.bid_price * (1.0 + obi_tilt);
@@ -319,15 +355,23 @@ void MarketMakerBot::check_and_update_orders() {
 
         [[maybe_unused]] bool ok = order_manager_->place_market_maker_orders_with_prices(
             mid_price, bid_price, ask_price, orderbook_time);
-    } else if (obi_tilt != 0.0) {
-        // Fixed spread + OBI tilt
+    } else {
+        // Non-AS mode: fixed spread with optional OBI tilt and inventory skew
         double spread = spread_pct;
-        double bid_offset = spread * (1.0 - obi_tilt);
-        double ask_offset = spread * (1.0 + obi_tilt);
+
+        // Inventory skew: positive inventory -> skew quotes to sell more aggressively
+        double skew = 0.0;
+        double inventory = risk_manager_ ? risk_manager_->position_tracker().get_position() : 0.0;
+        if (config_.inventory_skew_factor > 0.0 && std::abs(inventory) > 1e-9) {
+            skew = -inventory * config_.inventory_skew_factor;
+        }
+
+        double bid_offset = spread * (1.0 - obi_tilt) - skew;
+        double ask_offset = spread * (1.0 + obi_tilt) + skew;
         double bid_price = mid_price * (1.0 - bid_offset);
         double ask_price = mid_price * (1.0 + ask_offset);
 
-        // Guard against crossed orders
+        // Guard against crossed orders from aggressive tilt/skew
         if (bid_price >= ask_price) {
             bid_price = mid_price * (1.0 - spread);
             ask_price = mid_price * (1.0 + spread);
@@ -335,9 +379,6 @@ void MarketMakerBot::check_and_update_orders() {
 
         [[maybe_unused]] bool ok = order_manager_->place_market_maker_orders_with_prices(
             mid_price, bid_price, ask_price, orderbook_time);
-    } else {
-        // Default: fixed spread from config
-        order_manager_->update_orders_if_needed(mid_price, orderbook_time);
     }
 }
 
@@ -392,6 +433,27 @@ void MarketMakerBot::handle_connection_status(bool connected) {
     }
 }
 
+double MarketMakerBot::get_time_of_day_multiplier() const {
+    if (config_.time_of_day_rules.empty()) return 1.0;
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm utc_tm;
+    gmtime_r(&time_t, &utc_tm);
+    int hour = utc_tm.tm_hour;
+    for (const auto& rule : config_.time_of_day_rules) {
+        if (rule.start_hour_utc <= rule.end_hour_utc) {
+            // Normal range (e.g., 2-6)
+            if (hour >= rule.start_hour_utc && hour < rule.end_hour_utc)
+                return rule.spread_multiplier;
+        } else {
+            // Wraps midnight (e.g., 22-4)
+            if (hour >= rule.start_hour_utc || hour < rule.end_hour_utc)
+                return rule.spread_multiplier;
+        }
+    }
+    return 1.0;
+}
+
 bool MarketMakerBot::validate_config() {
     // Validate exchange type
     if (!ExchangeFactory::is_supported(config_.exchange_type)) {
@@ -438,6 +500,18 @@ void MarketMakerBot::print_status() {
              metrics.total_orders, metrics.successful_orders,
              metrics.avg_order_latency_ms);
 
+    // Latency percentiles
+    auto exec_pct = order_manager_->get_exec_percentiles();
+    auto react_pct = order_manager_->get_reaction_percentiles();
+    if (exec_pct.sample_count > 0) {
+        LOG_INFO(quill_logger_,
+                 "[LATENCY] exec: p50={:.2f}ms p95={:.2f}ms p99={:.2f}ms | "
+                 "react: p50={:.2f}ms p95={:.2f}ms p99={:.2f}ms (n={})",
+                 exec_pct.p50_ms, exec_pct.p95_ms, exec_pct.p99_ms,
+                 react_pct.p50_ms, react_pct.p95_ms, react_pct.p99_ms,
+                 exec_pct.sample_count);
+    }
+
     // Publish status snapshot to GCP Pub/Sub
     {
         Json::Value d;
@@ -456,6 +530,14 @@ void MarketMakerBot::print_status() {
             d["total_pnl"] = risk_manager_->pnl_tracker().get_total_pnl(mid, pos, avg_entry);
             d["kill_switch"] = risk_manager_->is_kill_switch_active();
         }
+        if (exec_pct.sample_count > 0) {
+            d["latency_exec_p50_ms"] = exec_pct.p50_ms;
+            d["latency_exec_p95_ms"] = exec_pct.p95_ms;
+            d["latency_exec_p99_ms"] = exec_pct.p99_ms;
+            d["latency_react_p50_ms"] = react_pct.p50_ms;
+            d["latency_react_p95_ms"] = react_pct.p95_ms;
+            d["latency_react_p99_ms"] = react_pct.p99_ms;
+        }
         Json::FastWriter w;
         publish_event("status", w.write(d));
     }
@@ -465,6 +547,16 @@ void MarketMakerBot::print_status() {
     mc.set_gauge("mid_price", current_mid_price_.load());
     mc.set_gauge("spread_bps", config_.spread_percentage * 10000);
     mc.set_gauge("bot_running", running_ ? 1.0 : 0.0);
+
+    // Latency percentile gauges
+    if (exec_pct.sample_count > 0) {
+        mc.set_gauge("latency_exec_p50_ms", exec_pct.p50_ms);
+        mc.set_gauge("latency_exec_p95_ms", exec_pct.p95_ms);
+        mc.set_gauge("latency_exec_p99_ms", exec_pct.p99_ms);
+        mc.set_gauge("latency_react_p50_ms", react_pct.p50_ms);
+        mc.set_gauge("latency_react_p95_ms", react_pct.p95_ms);
+        mc.set_gauge("latency_react_p99_ms", react_pct.p99_ms);
+    }
 
     if (risk_manager_) {
         double pos = risk_manager_->position_tracker().get_position();

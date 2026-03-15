@@ -8,6 +8,7 @@
 #include "exchange/exchange_interface.h"
 #include "trading/risk_manager.h"
 #include "trading/order_validator.h"
+#include "trading/latency_tracker.h"
 #include <memory>
 #include <mutex>
 #include <atomic>
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <future>
 #include <thread>
+#include "core/thread-pool.h"
 
 namespace MarketMaker {
 
@@ -55,6 +57,17 @@ public:
     [[nodiscard]] LatencyMetrics get_metrics() const;
     void reset_metrics();
 
+    // Percentile latency metrics (P50/P95/P99)
+    struct PercentileMetrics {
+        double p50_ms = 0.0;
+        double p95_ms = 0.0;
+        double p99_ms = 0.0;
+        double max_ms = 0.0;
+        size_t sample_count = 0;
+    };
+    PercentileMetrics get_exec_percentiles() const;
+    PercentileMetrics get_reaction_percentiles() const;
+
     // Price formatting
     double format_price(double price) const;
     double format_quantity(double quantity) const;
@@ -73,8 +86,11 @@ private:
     std::shared_ptr<Order> make_pooled_order(const Order& src);
 
     mutable std::mutex orders_mutex_;
-    std::shared_ptr<Order> active_bid_order_;
-    std::shared_ptr<Order> active_ask_order_;
+    std::vector<std::shared_ptr<Order>> active_bid_orders_;
+    std::vector<std::shared_ptr<Order>> active_ask_orders_;
+
+    // Thread pool for parallel cancel/place (avoids std::async thread creation overhead)
+    ThreadPool thread_pool_{2};
 
     std::atomic<double> last_mid_price_{0.0};
     std::chrono::steady_clock::time_point last_order_update_;
@@ -90,6 +106,14 @@ private:
                        const std::chrono::steady_clock::time_point& orderbook_time,
                        bool bid_success, bool ask_success);
     std::string generate_client_order_id(OrderSide side);
+
+    // Pre-computed multipliers for format_price/format_quantity (avoids std::pow on hot path)
+    double price_multiplier_;
+    double qty_multiplier_;
+
+    // Percentile latency trackers (circular buffer, 10K samples)
+    LatencyTracker exec_latency_tracker_{10000};
+    LatencyTracker reaction_latency_tracker_{10000};
 
     quill::Logger* logger_ = nullptr;
 };

@@ -83,4 +83,17 @@ double RiskManager::adjusted_position_limit(double base_limit) const {
     return base_limit * multiplier;
 }
 
+double RiskManager::get_drawdown_spread_multiplier(double mid_price) const {
+    if (config_.max_drawdown_spread_multiplier <= 0.0) return 1.0;
+    if (config_.max_drawdown >= 0.0) return 1.0;
+
+    double pos = position_tracker_.get_position();
+    double avg_entry = position_tracker_.get_average_entry_price();
+    double total_pnl = pnl_tracker_.get_total_pnl(mid_price, pos, avg_entry);
+
+    // max_drawdown is negative (e.g., -500). Ratio: 0.0 = no loss, 1.0 = at limit
+    double drawdown_ratio = std::clamp(total_pnl / config_.max_drawdown, 0.0, 1.0);
+    return 1.0 + drawdown_ratio * config_.max_drawdown_spread_multiplier;
+}
+
 } // namespace MarketMaker

@@ -627,6 +627,41 @@ std::optional<std::string> WebSocketTradingClient::place_market_order(
     return std::nullopt;
 }
 
+std::optional<std::string> WebSocketTradingClient::cancel_replace_order(
+    const std::string& symbol,
+    const std::string& cancel_order_id,
+    OrderSide side,
+    double price,
+    double quantity,
+    const std::string& client_order_id) {
+
+    Json::Value params;
+    params["symbol"] = symbol;
+    params["side"] = (side == OrderSide::BUY) ? "BUY" : "SELL";
+    params["type"] = "LIMIT";
+    params["cancelReplaceMode"] = "STOP_ON_FAILURE";
+    params["timeInForce"] = "GTC";
+    params["cancelOrderId"] = Json::Int64(std::stoll(cancel_order_id));
+    params["price"] = format_price(price, price_precision_);
+    params["quantity"] = format_quantity(quantity, quantity_precision_);
+
+    if (!client_order_id.empty()) {
+        params["newClientOrderId"] = client_order_id;
+    }
+
+    auto response = send_request_and_wait("order.cancelReplace", params);
+
+    if (!response || !response->isMember("result")) {
+        return std::nullopt;
+    }
+
+    const Json::Value& result = (*response)["result"];
+    if (result.isMember("newOrderResponse") && result["newOrderResponse"].isMember("orderId")) {
+        return result["newOrderResponse"]["orderId"].asString();
+    }
+    return std::nullopt;
+}
+
 std::optional<bool> WebSocketTradingClient::cancel_order(
     const std::string& symbol,
     const std::string& order_id,

@@ -75,6 +75,17 @@ public:
         const std::string& client_order_id = ""
     ) override;
 
+    std::optional<Order> cancel_replace_order(
+        const std::string& symbol,
+        const std::string& cancel_order_id,
+        OrderSide side,
+        double new_price,
+        double new_quantity,
+        const std::string& client_order_id = ""
+    ) override;
+
+    bool supports_cancel_replace() const override { return true; }
+
     std::optional<bool> cancel_order(
         const std::string& symbol,
         const std::string& order_id

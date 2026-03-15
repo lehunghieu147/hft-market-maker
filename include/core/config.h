@@ -107,6 +107,45 @@ struct Config {
     double obi_tilt_factor = 0.3;           // Max tilt as fraction of spread (0.3 = 30%)
     double obi_min_volume = 50.0;           // Min total volume for OBI signal
 
+    // Inventory skew for non-AS mode: skews bid/ask to revert position to neutral
+    // 0.0 = disabled, typical: 0.1-0.5 (higher = more aggressive mean-reversion)
+    double inventory_skew_factor = 0.0;
+
+    // Multi-level quoting: place N levels per side at staggered prices
+    int num_quote_levels = 1;              // 1 = single bid/ask (current behavior)
+    double level_spacing_multiplier = 1.5; // Each level spread *= this^level
+    double level_size_decay = 0.5;         // Each level size *= this^level
+
+    // Drawdown-based spread widening: at max_drawdown, spread *= (1 + this value)
+    // 0.0 = disabled
+    double max_drawdown_spread_multiplier = 0.0;
+
+    // Per-side position limits (0 = use symmetric max_position_size for both)
+    double max_long_position = 0.0;
+    double max_short_position = 0.0;
+
+    // Time-of-day spread multiplier rules (empty = disabled)
+    struct TimeOfDayRule {
+        int start_hour_utc = 0;
+        int end_hour_utc = 6;
+        double spread_multiplier = 1.5;
+    };
+    std::vector<TimeOfDayRule> time_of_day_rules;
+
+    // Toxic flow detection: widen spread when fills are heavily one-sided
+    bool use_toxic_flow_detection = false;
+    int toxic_flow_window = 50;
+    double toxic_flow_threshold = 0.7;
+    double toxic_flow_spread_mult = 1.5;
+
+    // GLFT extension of AS model: adds inventory penalty near position limits
+    bool use_glft = false;
+
+    // Dual-window volatility regime detection
+    int vol_fast_window = 20;
+    double vol_regime_threshold = 2.0;
+    double vol_regime_spread_mult = 2.0;
+
     // Exchange-specific parameters (optional)
     std::map<std::string, std::string> extra_params;
 
