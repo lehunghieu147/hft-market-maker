@@ -2,6 +2,7 @@
 #include "exchange/exchange_factory.h"
 #include "core/app_logger.h"
 #include <chrono>
+#include <iostream>
 
 namespace MarketMaker {
 
@@ -14,17 +15,22 @@ MomentumTakerBot::~MomentumTakerBot() {
 }
 
 bool MomentumTakerBot::initialize() {
-    LOG_INFO(quill_logger_, "{}", "Initializing Momentum Taker Bot...");
-
     if (!validate_config()) {
         LOG_ERROR(quill_logger_, "{}", "Invalid configuration");
         return false;
     }
+    LOG_INFO(quill_logger_, "{}", "  [2/7] Validating config... OK");
+
+    LOG_INFO(quill_logger_, "{}", "");
+    LOG_INFO(quill_logger_, "{}", ">> PHASE 2: Exchange Setup");
 
     if (!setup_exchange()) {
         LOG_ERROR(quill_logger_, "{}", "Failed to setup exchange");
         return false;
     }
+
+    LOG_INFO(quill_logger_, "{}", "");
+    LOG_INFO(quill_logger_, "{}", ">> PHASE 3: Risk & Signal Engine");
 
     // Initialize risk manager
     RiskConfig risk_config;
@@ -35,15 +41,22 @@ bool MomentumTakerBot::initialize() {
     risk_config.maker_fee_rate = config_.maker_fee_rate;
     risk_config.taker_fee_rate = config_.taker_fee_rate;
     risk_manager_ = std::make_shared<RiskManager>(risk_config);
+    LOG_INFO(quill_logger_, "{}", "  [4/7] Risk manager initialized OK");
 
     // Initialize order manager
     order_manager_ = std::make_shared<OrderManager>(exchange_, config_, risk_manager_);
+    LOG_INFO(quill_logger_, "{}", "  [5/7] Order manager initialized OK");
 
     // Initialize signal engine
     signal_engine_ = std::make_unique<SignalEngine>(config_.momentum);
+    LOG_INFO(quill_logger_, "  [6/7] Signal engine: EMA({}) epsilon={} cooldown={}ms OK",
+             config_.momentum.ema_window, config_.momentum.epsilon, config_.momentum.cooldown_ms);
 
     // Initialize latency tracker
     latency_tracker_ = std::make_unique<LatencyTracker>();
+
+    LOG_INFO(quill_logger_, "{}", "");
+    LOG_INFO(quill_logger_, "{}", ">> PHASE 4: Event Wiring");
 
     // Wire fill callback through exchange's WS trading connection
     if (exchange_->supports_websocket_trading()) {
@@ -54,20 +67,17 @@ bool MomentumTakerBot::initialize() {
                 order_manager_->on_fill_event(order_id, client_order_id,
                                               side, status, price, qty, cum_qty);
             });
-        LOG_INFO(quill_logger_, "{}", "User data stream wired via WS trading connection");
+        LOG_INFO(quill_logger_, "{}", "  [7/7] Fill callback wired OK");
     } else {
         LOG_WARNING(quill_logger_, "{}", "Fill tracking unavailable: set use_websocket_trading=true to enable");
     }
 
     initialized_ = true;
-    LOG_INFO(quill_logger_, "Momentum Taker Bot initialized: symbol={} epsilon={} ema_window={} order_size={}",
-             config_.symbol, config_.momentum.epsilon, config_.momentum.ema_window,
-             config_.momentum.order_size);
     return true;
 }
 
 bool MomentumTakerBot::setup_exchange() {
-    LOG_INFO(quill_logger_, "Setting up exchange: {}", config_.exchange_type);
+    LOG_INFO(quill_logger_, "  [3/7] Creating exchange via Factory ({} + websocket)", config_.exchange_type);
 
     config_.update_endpoints_for_exchange();
 
@@ -113,7 +123,9 @@ bool MomentumTakerBot::setup_exchange() {
         return false;
     }
 
-    LOG_INFO(quill_logger_, "{}", "Exchange setup completed");
+    LOG_INFO(quill_logger_, "{}", "  [3/7] Trading WS connected OK");
+    LOG_INFO(quill_logger_, "{}", "  [3/7] Market WS connected OK");
+    LOG_INFO(quill_logger_, "{}", "  [3/7] Callbacks wired OK");
     return true;
 }
 
@@ -198,9 +210,14 @@ void MomentumTakerBot::handle_orderbook_update(const OrderBook& ob) {
 
     if (best_bid <= 0 || best_ask <= 0) return;
 
+    uint64_t tick = ++tick_count_;
     Signal sig = signal_engine_->on_tick(best_bid, best_ask);
 
     if (sig != Signal::NONE) {
+        double mid = (best_bid + best_ask) / 2.0;
+        LOG_INFO(quill_logger_, "[SIGNAL]     {} ema={:.2f} mid={:.2f} tick={}",
+                 sig == Signal::BUY ? "BUY" : "SELL",
+                 signal_engine_->ema_value(), mid, tick);
         // Lock-free push into ring buffer from WS callback thread
         signal_ring_.try_push(SignalState{sig, best_bid, best_ask, ob_time});
         signal_fired_.store(true);
@@ -267,27 +284,25 @@ void MomentumTakerBot::execute_signal(const SignalState& state) {
         orders_filled_++;
         signals_fired_++;
         LOG_INFO(quill_logger_,
-                 "[MOMENTUM] {} at {:.2f} qty={:.6f} latency={}us ema={:.2f}",
+                 "[TRADE]      {} at ${:.2f} qty={:.6f} latency={}us OK",
                  state.signal == Signal::BUY ? "BUY" : "SELL",
-                 price, config_.momentum.order_size, latency_us,
-                 signal_engine_->ema_value());
+                 price, config_.momentum.order_size, latency_us);
     } else {
         LOG_WARNING(quill_logger_,
-                    "[MOMENTUM] {} FAILED at {:.2f} latency={}us",
+                    "[TRADE]      {} FAILED at ${:.2f} latency={}us",
                     state.signal == Signal::BUY ? "BUY" : "SELL",
                     price, latency_us);
     }
 }
 
 void MomentumTakerBot::print_status() {
+    double pos = risk_manager_ ? risk_manager_->position_tracker().get_position() : 0.0;
+    double daily_pnl = risk_manager_ ? risk_manager_->pnl_tracker().get_daily_pnl() : 0.0;
     LOG_INFO(quill_logger_,
-             "[STATUS] symbol={} ema={:.2f} signals={} orders(attempt={} filled={}) "
-             "lat_us(p50={:.0f} p90={:.0f} p99={:.0f})",
-             config_.symbol, signal_engine_->ema_value(),
-             signals_fired_.load(), orders_attempted_.load(), orders_filled_.load(),
-             latency_tracker_->percentile(0.50),
-             latency_tracker_->percentile(0.90),
-             latency_tracker_->percentile(0.99));
+             "[STATUS 30s] ema={:.2f} signals={} orders({}/{}) pos={:.6f} pnl=${:.2f}",
+             signal_engine_->ema_value(),
+             signals_fired_.load(), orders_filled_.load(), orders_attempted_.load(),
+             pos, daily_pnl);
 
     if (risk_manager_) {
         double pos = risk_manager_->position_tracker().get_position();

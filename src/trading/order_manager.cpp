@@ -121,8 +121,8 @@ bool OrderManager::place_market_maker_orders_with_prices(double mid_price, doubl
         }
     }
 
-    LOG_INFO(logger_, "PLACING_ORDERS mid={:.5f} bid={:.5f} ask={:.5f} qty={}",
-             mid_price, bid_price, ask_price, order_size);
+    LOG_INFO(logger_, "[ORDER]      BID ${:.2f} x {} | ASK ${:.2f} x {}",
+             bid_price, order_size, ask_price, order_size);
 
     bool bid_success = false;
     bool ask_success = false;
@@ -193,9 +193,9 @@ bool OrderManager::place_market_maker_orders_with_prices(double mid_price, doubl
     last_order_update_ = std::chrono::steady_clock::now();
 
     if (bid_success && ask_success) {
-        LOG_INFO(logger_, "{}", "BOTH ORDERS PLACED SUCCESSFULLY");
+        LOG_INFO(logger_, "{}", "[ORDER]      Both orders placed OK");
     } else if (bid_success || ask_success) {
-        LOG_WARNING(logger_, "PARTIAL SUCCESS: Only {} order placed", bid_success ? "BID" : "ASK");
+        LOG_WARNING(logger_, "Partial: Only {} order placed", bid_success ? "BID" : "ASK");
     } else {
         LOG_ERROR(logger_, "{}", "FAILED: No orders were placed");
     }
@@ -367,9 +367,8 @@ bool OrderManager::place_order(OrderSide side, double price, double quantity) {
         active_ask_order_ = make_pooled_order(*order_result);
     }
 
-    LOG_INFO(logger_, "Placed {} order: ID={} Price={:.2f} Qty={:.2f} [ok={} fail={} total={}]",
-             side_str, order_result->order_id, price, quantity,
-             metrics_.successful_orders, metrics_.failed_orders, metrics_.total_orders);
+    LOG_DEBUG(logger_, "Placed {} order: ID={} Price={:.2f} Qty={:.4f}",
+              side_str, order_result->order_id, price, quantity);
 
     return true;
 }
@@ -442,9 +441,8 @@ void OrderManager::update_metrics(const std::chrono::steady_clock::time_point& s
     metrics_.update_reaction_latency(reaction_latency_ms);
     metrics_.successful_orders += (bid_success ? 1 : 0) + (ask_success ? 1 : 0);
 
-    LOG_INFO(logger_, "LATENCY reaction={:.3f}ms ({}us) target={}",
-             reaction_latency_ms, reaction_latency_us,
-             reaction_latency_ms < 50 ? "MET" : "ABOVE");
+    LOG_DEBUG(logger_, "LATENCY reaction={:.3f}ms exec={:.3f}ms",
+              reaction_latency_ms, execution_latency_ms);
 }
 
 std::string OrderManager::generate_client_order_id(OrderSide side) {
@@ -502,7 +500,7 @@ void OrderManager::on_fill_event(const std::string& order_id,
 
         MetricsCollector::instance().increment("orders_filled_total");
 
-        LOG_INFO(logger_, "FILL: {} {} @ {} (pos: {:.6f} -> {:.6f})",
+        LOG_INFO(logger_, "[FILL]       {} {:.6f} @ ${:.2f} | pos: {:.6f} -> {:+.6f}",
                  (side == OrderSide::BUY ? "BUY" : "SELL"), quantity, price,
                  position_before, risk_manager_->position_tracker().get_position());
     }

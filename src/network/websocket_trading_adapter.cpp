@@ -231,15 +231,70 @@ std::optional<Order> WebSocketTradingAdapter::place_limit_order(
     return order;
 }
 
-std::optional<Order> WebSocketTradingAdapter::place_market_order(
-    [[maybe_unused]] const std::string& symbol,
-    [[maybe_unused]] OrderSide side,
-    [[maybe_unused]] double quantity,
-    [[maybe_unused]] const std::string& client_order_id) {
+std::optional<Order> WebSocketTradingAdapter::place_ioc_order(
+    const std::string& symbol,
+    OrderSide side,
+    double price,
+    double quantity,
+    const std::string& client_order_id) {
 
-    // Market orders via WebSocket would use type: "MARKET"
-    // For now, not implemented as the bot uses limit orders
-    return std::nullopt;
+    auto start_time = std::chrono::steady_clock::now();
+
+    // IOC limit order via WebSocket API
+    auto order_id = ws_trading_client_->place_ioc_order(
+        symbol, side, price, quantity, client_order_id);
+
+    if (!order_id) {
+        return std::nullopt;
+    }
+
+    auto end_time = std::chrono::steady_clock::now();
+    auto latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end_time - start_time).count();
+    LOG_DEBUG(get_logger(), "WebSocket IOC order latency: {}ms", latency_ms);
+
+    Order order;
+    order.order_id = *order_id;
+    order.client_order_id = client_order_id;
+    order.symbol = symbol;
+    order.side = side;
+    order.price = price;
+    order.quantity = quantity;
+    order.status = OrderStatus::NEW;
+    order.created_time = std::chrono::steady_clock::now();
+    return order;
+}
+
+std::optional<Order> WebSocketTradingAdapter::place_market_order(
+    const std::string& symbol,
+    OrderSide side,
+    double quantity,
+    const std::string& client_order_id) {
+
+    auto start_time = std::chrono::steady_clock::now();
+
+    auto order_id = ws_trading_client_->place_market_order(
+        symbol, side, quantity, client_order_id);
+
+    if (!order_id) {
+        return std::nullopt;
+    }
+
+    auto end_time = std::chrono::steady_clock::now();
+    auto latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end_time - start_time).count();
+    LOG_DEBUG(get_logger(), "WebSocket market order latency: {}ms", latency_ms);
+
+    Order order;
+    order.order_id = *order_id;
+    order.client_order_id = client_order_id;
+    order.symbol = symbol;
+    order.side = side;
+    order.price = 0.0;
+    order.quantity = quantity;
+    order.status = OrderStatus::NEW;
+    order.created_time = std::chrono::steady_clock::now();
+    return order;
 }
 
 std::optional<bool> WebSocketTradingAdapter::cancel_order(
@@ -546,7 +601,7 @@ void WebSocketTradingAdapter::handle_trading_response(const Json::Value& respons
     if (response.isMember("result")) {
         const Json::Value& result = response["result"];
         if (result.isMember("orderId")) {
-            LOG_INFO(get_logger(), "Order response received - ID: {}", result["orderId"].asString());
+            LOG_DEBUG(get_logger(), "Order response received - ID: {}", result["orderId"].asString());
         }
     } else if (response.isMember("error")) {
         LOG_ERROR(get_logger(), "Trading error: {}", response["error"]["msg"].asString());

@@ -52,9 +52,13 @@ int main(int argc, char* argv[]) {
     AppLogger::init();
     auto* logger = AppLogger::get("core");
 
-    std::cout << "===========================================\n"
-              << "    Momentum Taker Bot - HFT Strategy\n"
-              << "===========================================\n" << std::endl;
+    std::cout << "\n"
+              << "══════════════════════════════════════════════\n"
+              << "  Momentum Taker Bot — Startup Sequence\n"
+              << "══════════════════════════════════════════════\n"
+              << std::endl;
+
+    std::cout << "\xE2\x96\xB8 PHASE 1: Configuration" << std::endl;
 
     std::string config_file = "config.momentum.json";
     if (argc > 1) {
@@ -78,7 +82,7 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        LOG_INFO(logger, "Loading configuration from: {}", config_file);
+        LOG_INFO(logger, "  [1/7] Loading {}", config_file);
         auto config_opt = ConfigLoader::load_from_file(config_file);
 
         if (!config_opt) {
@@ -89,20 +93,26 @@ int main(int argc, char* argv[]) {
 
         Config config = *config_opt;
 
-        LOG_INFO(logger, "Config: symbol={} epsilon={} ema_window={} order_size={} order_type={}",
+        LOG_INFO(logger, "  [2/7] Config: {} epsilon={} ema={} size={} type={}",
                  config.symbol, config.momentum.epsilon, config.momentum.ema_window,
                  config.momentum.order_size, config.momentum.order_type);
 
         bot = std::make_unique<MomentumTakerBot>(config);
 
-        LOG_INFO(logger, "{}", "Initializing bot...");
         if (!bot->initialize()) {
             LOG_ERROR(logger, "{}", "Failed to initialize bot!");
             AppLogger::shutdown();
             return 1;
         }
 
-        LOG_INFO(logger, "{}", "Starting momentum taker bot... Press Ctrl+C to stop");
+        std::cout << "\n"
+                  << "══════════════════════════════════════════════\n"
+                  << "  READY — Momentum Taker on " << config.exchange_type << "\n"
+                  << "══════════════════════════════════════════════\n"
+                  << std::endl;
+
+        std::cout << "--- Signal Detection Active ---" << std::endl;
+
         bot->run();
 
         while (!should_exit && bot->is_running()) {

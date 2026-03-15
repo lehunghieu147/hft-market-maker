@@ -5,6 +5,8 @@
 #include "core/metrics_collector.h"
 #include <json/json.h>
 #include <chrono>
+#include <iostream>
+#include <thread>
 
 namespace MarketMaker {
 
@@ -21,19 +23,23 @@ MarketMakerBot::~MarketMakerBot() {
 }
 
 bool MarketMakerBot::initialize() {
-    logger_->log(LogLevel::INFO, "Initializing Market Maker Bot V2...");
-
     // Validate configuration
     if (!validate_config()) {
         logger_->log(LogLevel::ERROR,"Invalid configuration");
         return false;
     }
+    LOG_INFO(quill_logger_, "{}", "[2/8] Validating config... OK");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::cout << "\n▸ PHASE 2: Exchange Setup" << std::endl;
 
     // Setup exchange using factory pattern
     if (!setup_exchange()) {
         logger_->log(LogLevel::ERROR,"Failed to setup exchange");
         return false;
     }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::cout << "\n▸ PHASE 3: Risk & Order Management" << std::endl;
 
     // Initialize risk manager
     RiskConfig risk_config;
@@ -44,17 +50,16 @@ bool MarketMakerBot::initialize() {
     risk_config.maker_fee_rate = config_.maker_fee_rate;
     risk_config.taker_fee_rate = config_.taker_fee_rate;
     risk_manager_ = std::make_shared<RiskManager>(risk_config);
-    logger_->log(LogLevel::INFO, "Risk manager initialized (max_pos=" +
-                 std::to_string(config_.max_position_size) + ", max_loss=" +
-                 std::to_string(config_.max_daily_loss) + ")");
+    LOG_INFO(quill_logger_, "[4/8] Risk manager: max_pos={:.2f} max_loss=${:.0f} max_drawdown=${:.0f} OK",
+             config_.max_position_size, config_.max_daily_loss, config_.max_drawdown);
 
     // Initialize order manager with exchange interface and risk manager
     order_manager_ = std::make_shared<OrderManager>(exchange_, config_, risk_manager_);
-    logger_->log(LogLevel::INFO, "Order manager initialized successfully");
+    LOG_INFO(quill_logger_, "{}", "[5/8] Order manager: ObjectPool<Order>(128) pre-allocated OK");
 
     // Initialize volatility tracker
     volatility_tracker_ = std::make_shared<VolatilityTracker>(100, 0.001, 0.05);
-    logger_->log(LogLevel::INFO, "Volatility tracker initialized");
+    LOG_INFO(quill_logger_, "{}", "[6/8] Volatility tracker: window=100 range=[0.1%, 5.0%] OK");
 
     // Wire volatility tracker into risk manager for dynamic sizing
     if (config_.use_dynamic_sizing && risk_manager_) {
@@ -82,6 +87,9 @@ bool MarketMakerBot::initialize() {
                      std::to_string(config_.obi_tilt_factor) + ")");
     }
 
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::cout << "\n▸ PHASE 4: Event Wiring & Services" << std::endl;
+
     // Wire fill callback through exchange's WS trading connection
     if (exchange_->supports_websocket_trading()) {
         exchange_->set_fill_callback(
@@ -101,19 +109,20 @@ bool MarketMakerBot::initialize() {
                 Json::FastWriter w;
                 publish_event("fill", w.write(d));
             });
-        logger_->log(LogLevel::INFO, "User data stream wired via WS trading connection");
+        LOG_INFO(quill_logger_, "{}", "[7/8] Fill callback wired -> position + PnL tracking enabled OK");
     } else {
         logger_->log(LogLevel::WARNING, "Fill tracking unavailable: set use_websocket_trading=true to enable");
     }
 
     initialized_ = true;
-    logger_->log(LogLevel::INFO, "Market Maker Bot V2 initialized successfully");
+    LOG_INFO(quill_logger_, "{}", "Market Maker Bot initialized OK");
 
     return true;
 }
 
 bool MarketMakerBot::setup_exchange() {
-    logger_->log(LogLevel::INFO, "Setting up exchange: " + config_.exchange_type);
+    LOG_INFO(quill_logger_, "[3/8] Creating exchange via Factory ({} + {})",
+             config_.exchange_type, config_.use_websocket_trading ? "websocket" : "REST");
 
     // Update config endpoints based on exchange type
     config_.update_endpoints_for_exchange();
@@ -165,7 +174,7 @@ bool MarketMakerBot::setup_exchange() {
         return false;
     }
 
-    logger_->log(LogLevel::INFO, "Exchange setup completed successfully");
+    LOG_INFO(quill_logger_, "{}", "[3/8] Callbacks wired: orderbook, connection OK");
     return true;
 }
 
@@ -180,14 +189,10 @@ void MarketMakerBot::run() {
         logger_->log(LogLevel::WARNING, "run() called while already running - ignoring");
         return;
     }
-    logger_->log(LogLevel::INFO, "Starting Market Maker Bot V2...");
-
     // Start main trading loop in separate thread
     main_thread_ = std::thread([this]() {
         main_loop();
     });
-
-    logger_->log(LogLevel::INFO, "Market Maker Bot V2 is running on " + config_.exchange_type);
 }
 
 void MarketMakerBot::stop() {
@@ -356,9 +361,15 @@ void MarketMakerBot::handle_orderbook_update(const OrderBook& orderbook) {
             volatility_tracker_->on_price(new_mid_price);
         }
 
-        if (std::abs(old_mid_price - new_mid_price) > 0.00001) {
-            LOG_INFO(quill_logger_, "[PRICE] ${:.5f} -> ${:.5f} (change: {:+.5f})",
-                     old_mid_price, new_mid_price, new_mid_price - old_mid_price);
+        uint64_t tick = ++tick_count_;
+        double change = new_mid_price - old_mid_price;
+        if (std::abs(change) > 0.00001) {
+            // Only log first tick, or when price moves >= $1 (reduce noise)
+            if (old_mid_price <= 0.00001) {
+                LOG_INFO(quill_logger_, "[TICK #{}] mid=${:.2f} (first tick)", tick, new_mid_price);
+            } else if (std::abs(change) >= 1.0 || tick % 100 == 0) {
+                LOG_INFO(quill_logger_, "[TICK #{}] mid=${:.2f} ({:+.2f})", tick, new_mid_price, change);
+            }
 
             // Signal price change for immediate reaction
             price_changed_.store(true);
@@ -369,11 +380,15 @@ void MarketMakerBot::handle_orderbook_update(const OrderBook& orderbook) {
 
 void MarketMakerBot::handle_connection_status(bool connected) {
     if (connected) {
-        logger_->log(LogLevel::INFO, "Connected to " + config_.exchange_type + " exchange");
+        // Only log once when fully connected (both WS), not per-WS
+        if (!initialized_) return;
+        LOG_INFO(quill_logger_, "Reconnected to {} exchange", config_.exchange_type);
         publish_event("connection", R"({"status":"connected"})");
     } else {
-        logger_->log(LogLevel::WARNING, "Disconnected from " + config_.exchange_type + " exchange");
-        publish_event("connection", R"({"status":"disconnected"})");
+        if (initialized_) {
+            LOG_WARNING(quill_logger_, "Disconnected from {} exchange", config_.exchange_type);
+            publish_event("connection", R"({"status":"disconnected"})");
+        }
     }
 }
 
@@ -414,23 +429,14 @@ bool MarketMakerBot::validate_config() {
 
 void MarketMakerBot::print_status() {
     auto metrics = order_manager_->get_metrics();
-    auto [bid_order, ask_order] = order_manager_->get_active_orders();
 
+    double pos = risk_manager_ ? risk_manager_->position_tracker().get_position() : 0.0;
+    double daily_pnl = risk_manager_ ? risk_manager_->pnl_tracker().get_daily_pnl() : 0.0;
     LOG_INFO(quill_logger_,
-             "[STATUS] exchange={} symbol={} mid={:.2f} "
-             "bid={:.2f} ask={:.2f} "
-             "orders(total={} ok={} fail={} rate={:.1f}% opm={:.1f}) "
-             "exec_lat(avg={:.3f} min={:.3f} max={:.3f}ms) "
-             "react_lat(avg={:.3f} min={:.3f} max={:.3f}ms) "
-             "reconnects={} uptime={:.2f}%",
-             exchange_->get_exchange_name(), config_.symbol, current_mid_price_.load(),
-             bid_order ? bid_order->price : 0.0,
-             ask_order ? ask_order->price : 0.0,
-             metrics.total_orders, metrics.successful_orders, metrics.failed_orders,
-             metrics.get_success_rate(), metrics.get_orders_per_minute(),
-             metrics.avg_order_latency_ms, metrics.min_order_latency_ms, metrics.max_order_latency_ms,
-             metrics.avg_reaction_latency_ms, metrics.min_reaction_latency_ms, metrics.max_reaction_latency_ms,
-             metrics.reconnect_count, metrics.get_uptime_percentage());
+             "[STATUS 30s] pos={:.6f} pnl=${:.2f} orders={} fills={} latency={:.1f}ms",
+             pos, daily_pnl,
+             metrics.total_orders, metrics.successful_orders,
+             metrics.avg_order_latency_ms);
 
     // Publish status snapshot to GCP Pub/Sub
     {

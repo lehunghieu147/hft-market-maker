@@ -90,9 +90,13 @@ int main(int argc, char* argv[]) {
     AppLogger::init();
     auto* logger = AppLogger::get("core");
 
-    std::cout << "===========================================\n"
-              << "    Market Maker Bot - High Frequency Trading\n"
-              << "===========================================\n" << std::endl;
+    std::cout << "\n"
+              << "══════════════════════════════════════════════\n"
+              << "  Market Maker Bot v2 — Startup Sequence\n"
+              << "══════════════════════════════════════════════\n"
+              << std::endl;
+
+    std::cout << "▸ PHASE 1: Configuration" << std::endl;
 
     // Determine config file path
     std::string config_file = "config.json";
@@ -120,7 +124,7 @@ int main(int argc, char* argv[]) {
 
     try {
         // Load configuration from file
-        LOG_INFO(logger, "Loading configuration from: {}", config_file);
+        LOG_INFO(logger, "  [1/8] Loading {}", config_file);
         auto config_opt = ConfigLoader::load_from_file(config_file);
 
         if (!config_opt) {
@@ -131,13 +135,13 @@ int main(int argc, char* argv[]) {
 
         Config config = *config_opt;
 
-        LOG_INFO(logger, "Configuration: symbol={} order_size={} spread={:.2f}%",
-                 config.symbol, config.order_size, config.spread_percentage * 100);
+        LOG_INFO(logger, "  [2/8] Config: {} spread={:.2f}% size={} mode={}",
+                 config.symbol, config.spread_percentage * 100, config.order_size,
+                 config.use_websocket_trading ? "websocket" : "rest");
 
         // Create and initialize bot
         bot = std::make_unique<MarketMakerBot>(config);
 
-        LOG_INFO(logger, "{}", "Initializing bot...");
         if (!bot->initialize()) {
             LOG_ERROR(logger, "{}", "Failed to initialize bot!");
             AppLogger::shutdown();
@@ -149,6 +153,7 @@ int main(int argc, char* argv[]) {
         if (config.metrics_port > 0) {
             metrics_server = std::make_unique<MetricsServer>(config.metrics_port);
             metrics_server->start();
+            LOG_INFO(logger, "  [8/8] Prometheus :{}/metrics ... listening OK", config.metrics_port);
         }
 
         // Start gRPC server
@@ -178,8 +183,13 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Run bot
-        LOG_INFO(logger, "{}", "Starting market maker bot... Press Ctrl+C to stop");
+        std::cout << "\n"
+                  << "══════════════════════════════════════════════\n"
+                  << "  READY — 2 WS connections active\n"
+                  << "══════════════════════════════════════════════\n"
+                  << std::endl;
+
+        std::cout << "--- Trading Loop Started ---" << std::endl;
 
         bot->run();
 

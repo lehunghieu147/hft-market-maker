@@ -50,6 +50,19 @@ public:
         bool wait_for_response = true
     );
 
+    std::optional<std::string> place_ioc_order(
+        const std::string& symbol,
+        OrderSide side,
+        double price,
+        double quantity,
+        const std::string& client_order_id = "");
+
+    std::optional<std::string> place_market_order(
+        const std::string& symbol,
+        OrderSide side,
+        double quantity,
+        const std::string& client_order_id = "");
+
     std::optional<bool> cancel_order(
         const std::string& symbol,
         const std::string& order_id,

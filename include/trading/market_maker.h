@@ -85,6 +85,7 @@ private:
     // State
     std::atomic<bool> running_{false};
     std::atomic<bool> initialized_{false};
+    std::atomic<uint64_t> tick_count_{0};
 
     // Protects config_ fields written by gRPC thread and read by trading thread
     mutable std::mutex config_mutex_;

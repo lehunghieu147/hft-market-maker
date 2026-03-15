@@ -351,10 +351,10 @@ void WebSocketTradingClient::handle_order_response(const Json::Value& response) 
     if (result.isMember("orderId")) {
         metrics_.successful_orders++;
 
-        LOG_INFO(get_logger(), "Order successful - ID: {} Side: {} Price: {}",
-                 result["orderId"].asString(),
-                 result.isMember("side") ? result["side"].asString() : "N/A",
-                 result.isMember("price") ? result["price"].asString() : "N/A");
+        LOG_DEBUG(get_logger(), "Order successful - ID: {} Side: {} Price: {}",
+                  result["orderId"].asString(),
+                  result.isMember("side") ? result["side"].asString() : "N/A",
+                  result.isMember("price") ? result["price"].asString() : "N/A");
     } else if (result.isMember("status") && result["status"].asString() == "CANCELED") {
         metrics_.cancelled_orders++;
         LOG_INFO(get_logger(), "{}", "Order cancelled successfully");
@@ -563,6 +563,67 @@ std::optional<std::string> WebSocketTradingClient::place_limit_order(
         return result["orderId"].asString();
     }
 
+    return std::nullopt;
+}
+
+std::optional<std::string> WebSocketTradingClient::place_ioc_order(
+    const std::string& symbol,
+    OrderSide side,
+    double price,
+    double quantity,
+    const std::string& client_order_id) {
+
+    Json::Value params;
+    params["symbol"] = symbol;
+    params["side"] = (side == OrderSide::BUY) ? "BUY" : "SELL";
+    params["type"] = "LIMIT";
+    params["timeInForce"] = "IOC";
+    params["price"] = format_price(price, price_precision_);
+    params["quantity"] = format_quantity(quantity, quantity_precision_);
+
+    if (!client_order_id.empty()) {
+        params["newClientOrderId"] = client_order_id;
+    }
+
+    auto response = send_request_and_wait("order.place", params);
+
+    if (!response || !response->isMember("result")) {
+        return std::nullopt;
+    }
+
+    const Json::Value& result = (*response)["result"];
+    if (result.isMember("orderId")) {
+        return result["orderId"].asString();
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> WebSocketTradingClient::place_market_order(
+    const std::string& symbol,
+    OrderSide side,
+    double quantity,
+    const std::string& client_order_id) {
+
+    Json::Value params;
+    params["symbol"] = symbol;
+    params["side"] = (side == OrderSide::BUY) ? "BUY" : "SELL";
+    params["type"] = "MARKET";
+    params["quantity"] = format_quantity(quantity, quantity_precision_);
+
+    if (!client_order_id.empty()) {
+        params["newClientOrderId"] = client_order_id;
+    }
+
+    auto response = send_request_and_wait("order.place", params);
+
+    if (!response || !response->isMember("result")) {
+        return std::nullopt;
+    }
+
+    const Json::Value& result = (*response)["result"];
+    if (result.isMember("orderId")) {
+        return result["orderId"].asString();
+    }
     return std::nullopt;
 }
 

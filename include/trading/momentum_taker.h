@@ -62,6 +62,7 @@ private:
     std::atomic<int64_t> signals_fired_{0};
     std::atomic<int64_t> orders_attempted_{0};
     std::atomic<int64_t> orders_filled_{0};
+    std::atomic<uint64_t> tick_count_{0};
 
     // Thread
     std::thread main_thread_;
